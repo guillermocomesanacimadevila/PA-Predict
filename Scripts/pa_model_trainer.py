@@ -2,16 +2,19 @@ import pandas as pd
 import numpy as np
 import argparse
 import os
+import joblib
+import shap
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score,
-    roc_auc_score, confusion_matrix, classification_report
+    roc_auc_score, confusion_matrix, classification_report,
+    roc_curve, precision_recall_curve
 )
-import matplotlib.pyplot as plt
-import seaborn as sns
 
 
 class PAModelTrainer:
@@ -35,19 +38,23 @@ class PAModelTrainer:
 
     def train_model(self):
         if self.model_type == 'logistic':
-            self.model = LogisticRegression(max_iter=1000)
+            model = LogisticRegression(max_iter=1000, class_weight='balanced')
+            param_grid = {'C': [0.01, 0.1, 1, 10]}
         elif self.model_type == 'rf':
-            self.model = RandomForestClassifier(n_estimators=100, random_state=42)
+            model = RandomForestClassifier(class_weight='balanced', random_state=42)
+            param_grid = {'n_estimators': [100, 200], 'max_depth': [None, 10, 20]}
         else:
             raise ValueError("Model type must be 'logistic' or 'rf'.")
-        self.model.fit(self.X_train, self.y_train)
-        print(f"✅ Trained {self.model_type.upper()} model.")
+
+        grid = GridSearchCV(model, param_grid, cv=5, scoring='roc_auc', n_jobs=-1)
+        grid.fit(self.X_train, self.y_train)
+        self.model = grid.best_estimator_
+        print(f"✅ Trained {self.model_type.upper()} model with best params: {grid.best_params_}")
 
     def evaluate_model(self):
-        if self.model is None:
-            raise ValueError("Model not trained yet.")
         y_pred = self.model.predict(self.X_test)
         y_prob = self.model.predict_proba(self.X_test)[:, 1]
+
         print(f"\n📈 Evaluation for {self.model_type.upper()}:\n")
         print(classification_report(self.y_test, y_pred))
         print(f"AUC-ROC: {roc_auc_score(self.y_test, y_prob):.3f}")
@@ -66,7 +73,7 @@ class PAModelTrainer:
             title = "Feature Importance (Random Forest)"
             xlabel = "Importance"
         else:
-            raise ValueError("Model type must be 'logistic' or 'rf'.")
+            return
 
         sorted_idx = np.argsort(np.abs(importances))[::-1]
         sorted_features = np.array(self.feature_names)[sorted_idx]
@@ -74,46 +81,30 @@ class PAModelTrainer:
 
         plt.figure(figsize=(10, 6))
         sns.set(style="whitegrid", font_scale=1.2)
-        sns.barplot(
-            x=sorted_importances,
-            y=sorted_features,
-            palette="Blues_d",
-            edgecolor="black"
-        )
+        sns.barplot(x=sorted_importances, y=sorted_features, palette="Blues_d", edgecolor="black")
         plt.title(title, fontsize=16, weight='bold')
         plt.xlabel(xlabel, fontsize=14)
         plt.ylabel("Features", fontsize=14)
-        plt.xticks(fontsize=12)
-        plt.yticks(fontsize=12)
         plt.tight_layout()
 
         if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            plt.savefig(save_path, dpi=300)
             print(f"📁 Feature importance plot saved to: {save_path}")
         else:
             plt.show()
 
-    def plot_confusion_matrix(self, normalize=False, save_path=None):
-        if self.model is None:
-            raise ValueError("Model not trained yet.")
+    def plot_confusion_matrix(self, save_path=None):
         y_pred = self.model.predict(self.X_test)
         cm = confusion_matrix(self.y_test, y_pred)
         labels = ["No PA", "Diagnosed PA"]
-
-        if normalize:
-            cm = cm.astype("float") / cm.sum(axis=1)[:, np.newaxis]
-            fmt = ".2f"
-            title = "Normalized Confusion Matrix"
-        else:
-            fmt = "d"
-            title = "Confusion Matrix"
 
         plt.figure(figsize=(6, 5))
         sns.set(style="white", font_scale=1.2)
         sns.heatmap(
             cm,
             annot=True,
-            fmt=fmt,
+            fmt="d",
             cmap="Blues",
             xticklabels=labels,
             yticklabels=labels,
@@ -122,12 +113,43 @@ class PAModelTrainer:
         )
         plt.ylabel("Actual", fontsize=14)
         plt.xlabel("Predicted", fontsize=14)
-        plt.title(title, fontsize=16, weight='bold')
+        plt.title("Confusion Matrix", fontsize=16, weight='bold')
         plt.tight_layout()
 
         if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            plt.savefig(save_path, dpi=300)
             print(f"📁 Confusion matrix saved to: {save_path}")
+        else:
+            plt.show()
+
+    def plot_roc_pr_curves(self, save_path=None):
+        y_prob = self.model.predict_proba(self.X_test)[:, 1]
+        fpr, tpr, _ = roc_curve(self.y_test, y_prob)
+        precision, recall, _ = precision_recall_curve(self.y_test, y_prob)
+
+        plt.figure(figsize=(12, 5))
+
+        plt.subplot(1, 2, 1)
+        plt.plot(fpr, tpr, label=f"AUC = {roc_auc_score(self.y_test, y_prob):.2f}")
+        plt.plot([0, 1], [0, 1], linestyle='--')
+        plt.xlabel("False Positive Rate")
+        plt.ylabel("True Positive Rate")
+        plt.title("ROC Curve")
+        plt.legend()
+
+        plt.subplot(1, 2, 2)
+        plt.plot(recall, precision)
+        plt.xlabel("Recall")
+        plt.ylabel("Precision")
+        plt.title("Precision-Recall Curve")
+
+        plt.tight_layout()
+
+        if save_path:
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            plt.savefig(save_path, dpi=300)
+            print(f"📁 ROC & PR curves saved to: {save_path}")
         else:
             plt.show()
 
@@ -136,7 +158,9 @@ def main():
     parser = argparse.ArgumentParser(description="Train ML model for Pernicious Anaemia detection.")
     parser.add_argument("--data", type=str, required=True, help="Path to the input CSV dataset.")
     parser.add_argument("--model", type=str, choices=["logistic", "rf"], default="logistic", help="Model type.")
-    parser.add_argument("--savefigs", action="store_true", help="Save feature importance and confusion matrix plots.")
+    parser.add_argument("--savefigs", action="store_true", help="Save plots to disk.")
+    parser.add_argument("--output_model", type=str, default="output/model.pkl", help="Path to save trained model.")
+    parser.add_argument("--output_figs_dir", type=str, default="output/figs", help="Directory to save plots.")
     args = parser.parse_args()
 
     trainer = PAModelTrainer(data_path=args.data, model_type=args.model)
@@ -144,12 +168,18 @@ def main():
     trainer.train_model()
     trainer.evaluate_model()
 
+    os.makedirs(os.path.dirname(args.output_model), exist_ok=True)
+    joblib.dump(trainer.model, args.output_model)
+    print(f"🧠 Model saved to: {args.output_model}")
+
     if args.savefigs:
-        trainer.plot_feature_importance(save_path=f"figs/feature_importance_{args.model}.png")
-        trainer.plot_confusion_matrix(normalize=True, save_path=f"figs/confusion_matrix_{args.model}.png")
+        trainer.plot_feature_importance(save_path=f"{args.output_figs_dir}/feature_importance_{args.model}.png")
+        trainer.plot_confusion_matrix(save_path=f"{args.output_figs_dir}/confusion_matrix_{args.model}.png")
+        trainer.plot_roc_pr_curves(save_path=f"{args.output_figs_dir}/roc_pr_curve_{args.model}.png")
     else:
         trainer.plot_feature_importance()
         trainer.plot_confusion_matrix()
+        trainer.plot_roc_pr_curves()
 
 
 if __name__ == "__main__":
