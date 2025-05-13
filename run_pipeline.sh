@@ -96,10 +96,26 @@ TEMPLATE_PATH="Scripts/report_template.html"
 if $USE_DOCKER; then
   echo "🐳 Running pipeline via Docker..."
   docker run --rm -v "$PWD":/app -w /app pa-ml-pipeline \
-    bash Scripts/run_pipeline.sh \
-      --samples "$SAMPLES" \
-      --seed "$SEED" \
-      --model "$MODEL_TYPE"
+    bash -c "
+      mkdir -p $DATA_DIR $OUTPUT_DIR $FIGS_DIR &&
+      python Scripts/generate_pa_data.py \
+        --samples $SAMPLES \
+        --seed $SEED \
+        --output $DATA_PATH &&
+      python Scripts/pa_model_trainer.py \
+        --data $DATA_PATH \
+        --model $MODEL_TYPE \
+        --savefigs \
+        --output_model $MODEL_PATH \
+        --output_figs_dir $FIGS_DIR &&
+      python Scripts/benchmark_models.py \
+        --data $DATA_PATH \
+        --output_csv $CSV_REPORT &&
+      python Scripts/generate_report.py \
+        --csv $CSV_REPORT \
+        --output $HTML_REPORT \
+        --template $TEMPLATE_PATH
+    "
   exit 0
 fi
 
