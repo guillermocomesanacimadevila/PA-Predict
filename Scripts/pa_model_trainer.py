@@ -10,12 +10,12 @@ import seaborn as sns
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score,
     roc_auc_score, confusion_matrix, classification_report,
     roc_curve, precision_recall_curve
 )
-
 
 class PAModelTrainer:
     def __init__(self, data_path, model_type='logistic'):
@@ -43,8 +43,16 @@ class PAModelTrainer:
         elif self.model_type == 'rf':
             model = RandomForestClassifier(class_weight='balanced', random_state=42)
             param_grid = {'n_estimators': [100, 200], 'max_depth': [None, 10, 20]}
+        elif self.model_type == 'xgb':
+            model = XGBClassifier(
+                use_label_encoder=False,
+                eval_metric='logloss',
+                scale_pos_weight=5,
+                random_state=42
+            )
+            param_grid = {'n_estimators': [100, 200], 'max_depth': [3, 5, 7]}
         else:
-            raise ValueError("Model type must be 'logistic' or 'rf'.")
+            raise ValueError("Model type must be 'logistic', 'rf', or 'xgb'.")
 
         grid = GridSearchCV(model, param_grid, cv=5, scoring='roc_auc', n_jobs=-1)
         grid.fit(self.X_train, self.y_train)
@@ -56,11 +64,11 @@ class PAModelTrainer:
         y_prob = self.model.predict_proba(self.X_test)[:, 1]
 
         print(f"\n📈 Evaluation for {self.model_type.upper()}:\n")
-        print(classification_report(self.y_test, y_pred))
+        print(classification_report(self.y_test, y_pred, zero_division=0))
         print(f"AUC-ROC: {roc_auc_score(self.y_test, y_prob):.3f}")
         print(f"Accuracy: {accuracy_score(self.y_test, y_pred):.3f}")
-        print(f"Precision: {precision_score(self.y_test, y_pred):.3f}")
-        print(f"Recall: {recall_score(self.y_test, y_pred):.3f}")
+        print(f"Precision: {precision_score(self.y_test, y_pred, zero_division=0):.3f}")
+        print(f"Recall: {recall_score(self.y_test, y_pred, zero_division=0):.3f}")
         print("Confusion Matrix:\n", confusion_matrix(self.y_test, y_pred))
 
     def plot_feature_importance(self, save_path=None):
@@ -68,9 +76,9 @@ class PAModelTrainer:
             importances = self.model.coef_[0]
             title = "Feature Importance (Logistic Regression)"
             xlabel = "Coefficient"
-        elif self.model_type == 'rf':
+        elif self.model_type in ['rf', 'xgb']:
             importances = self.model.feature_importances_
-            title = "Feature Importance (Random Forest)"
+            title = f"Feature Importance ({self.model_type.upper()})"
             xlabel = "Importance"
         else:
             return
@@ -172,7 +180,7 @@ class PAModelTrainer:
 def main():
     parser = argparse.ArgumentParser(description="Train ML model for Pernicious Anaemia detection.")
     parser.add_argument("--data", type=str, required=True, help="Path to the input CSV dataset.")
-    parser.add_argument("--model", type=str, choices=["logistic", "rf"], default="logistic", help="Model type.")
+    parser.add_argument("--model", type=str, choices=["logistic", "rf", "xgb"], default="logistic", help="Model type.")
     parser.add_argument("--savefigs", action="store_true", help="Save plots to disk.")
     parser.add_argument("--output_model", type=str, default="output/model.pkl", help="Path to save trained model.")
     parser.add_argument("--output_figs_dir", type=str, default="output/figs", help="Directory to save plots.")
