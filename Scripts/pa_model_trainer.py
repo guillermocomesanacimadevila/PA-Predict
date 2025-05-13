@@ -153,6 +153,21 @@ class PAModelTrainer:
         else:
             plt.show()
 
+    def plot_shap_summary(self, save_path=None):
+        print("🔍 Generating SHAP summary plot...")
+        explainer = shap.Explainer(self.model, self.X_train)
+        shap_values = explainer(self.X_test)
+
+        plt.figure()
+        shap.summary_plot(shap_values, self.X_test, show=False)
+
+        if save_path:
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            plt.savefig(save_path, bbox_inches='tight', dpi=300)
+            print(f"📁 SHAP summary plot saved to: {save_path}")
+        else:
+            plt.show()
+
 
 def main():
     parser = argparse.ArgumentParser(description="Train ML model for Pernicious Anaemia detection.")
@@ -176,10 +191,12 @@ def main():
         trainer.plot_feature_importance(save_path=f"{args.output_figs_dir}/feature_importance_{args.model}.png")
         trainer.plot_confusion_matrix(save_path=f"{args.output_figs_dir}/confusion_matrix_{args.model}.png")
         trainer.plot_roc_pr_curves(save_path=f"{args.output_figs_dir}/roc_pr_curve_{args.model}.png")
+        trainer.plot_shap_summary(save_path=f"{args.output_figs_dir}/shap_summary_{args.model}.png")
     else:
         trainer.plot_feature_importance()
         trainer.plot_confusion_matrix()
         trainer.plot_roc_pr_curves()
+        trainer.plot_shap_summary()
 
 
 if __name__ == "__main__":
