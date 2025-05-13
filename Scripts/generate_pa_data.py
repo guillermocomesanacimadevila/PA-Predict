@@ -70,3 +70,13 @@ if __name__ == "__main__":
     
     
 # Run from command line = python generate_pa_data.py --samples 1000 --seed 123 --output data/pa_dataset.csv
+# Run python pa_model_trainer.py --data ../data/simulated_pa_data.csv --model rf --savefigs
+
+# TO DOs
+# Integrate into Nextflow
+# Create a README
+# Create a Dockerfile 
+# Create a conda environment
+# Integrate "Argparse into other pipeline"
+# Generate secomdary datasets for testing data 
+# Improve the model if TESTING DATA RESULS ARE NOT GOOD 
