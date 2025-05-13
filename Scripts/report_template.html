@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>PA ML Benchmark Report</title>
+  <style>
+    body { font-family: Arial; margin: 2em; }
+    h1 { color: #003366; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1em; }
+    th, td { border: 1px solid #ccc; padding: 0.6em; text-align: center; }
+    th { background-color: #f0f0f0; }
+  </style>
+</head>
+<body>
+  <h1>Pernicious Anaemia ML Report</h1>
+  <p><strong>Date:</strong> {{ date }}</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Model</th>
+        <th>AUC</th>
+        <th>Accuracy</th>
+        <th>Precision</th>
+        <th>Recall</th>
+        <th>F1 Score</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{{ row['Model'] }}</td>
+        <td>{{ "%.3f"|format(row['AUC']) }}</td>
+        <td>{{ "%.3f"|format(row['Accuracy']) }}</td>
+        <td>{{ "%.3f"|format(row['Precision']) }}</td>
+        <td>{{ "%.3f"|format(row['Recall']) }}</td>
+        <td>{{ "%.3f"|format(row['F1']) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>
