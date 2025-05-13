@@ -42,7 +42,7 @@ process TrainModel {
 
     output:
     path "${params.outdir}/model.pkl"
-    path "${params.outdir}/figs/*"
+    path("${params.outdir}/figs"), emit: figs_out
 
     script:
     """
@@ -95,4 +95,14 @@ process GenerateReport {
       --output ${params.report_html} \\
       --template ${params.template}
     """
+}
+
+// --------------------
+// Workflow Execution Order
+// --------------------
+workflow {
+    GenerateData()
+    TrainModel(GenerateData.out)
+    BenchmarkModels(GenerateData.out)
+    GenerateReport(BenchmarkModels.out)
 }
