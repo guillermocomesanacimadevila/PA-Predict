@@ -77,6 +77,19 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ----------------------------
+# Setup Paths
+# ----------------------------
+
+DATA_DIR="data"
+OUTPUT_DIR="output"
+DATA_PATH="${DATA_DIR}/simulated_pa_data.csv"
+MODEL_PATH="${OUTPUT_DIR}/model.pkl"
+FIGS_DIR="${OUTPUT_DIR}/figs"
+CSV_REPORT="${OUTPUT_DIR}/model_comparison.csv"
+HTML_REPORT="${OUTPUT_DIR}/report.html"
+TEMPLATE_PATH="Scripts/report_template.html"
+
+# ----------------------------
 # Mode: Docker
 # ----------------------------
 
@@ -101,14 +114,8 @@ if $USE_NEXTFLOW; then
 fi
 
 # ----------------------------
-# Mode: Local Native Execution
+# Local Native Execution
 # ----------------------------
-
-DATA_DIR="data"
-OUTPUT_DIR="output"
-DATA_PATH="${DATA_DIR}/simulated_pa_data.csv"
-MODEL_PATH="${OUTPUT_DIR}/model.pkl"
-FIGS_DIR="${OUTPUT_DIR}/figs"
 
 echo "🧼 Preparing directories..."
 mkdir -p "$DATA_DIR" "$OUTPUT_DIR" "$FIGS_DIR"
@@ -127,6 +134,23 @@ python Scripts/pa_model_trainer.py \
   --output_model "$MODEL_PATH" \
   --output_figs_dir "$FIGS_DIR"
 
-echo "✅ Pipeline finished."
-echo "📁 Model saved to: $MODEL_PATH"
-echo "🖼️  Plots saved to: $FIGS_DIR"
+echo "📈 Benchmarking all models..."
+python Scripts/benchmark_models.py \
+  --data "$DATA_PATH" \
+  --output_csv "$CSV_REPORT"
+
+echo "📝 Generating HTML report..."
+python Scripts/generate_report.py \
+  --csv "$CSV_REPORT" \
+  --output "$HTML_REPORT" \
+  --template "$TEMPLATE_PATH"
+
+# ----------------------------
+# Completion
+# ----------------------------
+
+echo "✅ Pipeline completed successfully."
+echo "🧠 Trained model saved to: $MODEL_PATH"
+echo "📊 Model comparison CSV: $CSV_REPORT"
+echo "📄 HTML report generated: $HTML_REPORT"
+echo "📁 Visualizations saved in: $FIGS_DIR"
