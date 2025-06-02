@@ -11,7 +11,7 @@ from pa_model_trainer import PAModelTrainer
 def benchmark_models(data_path, output_csv="output/model_comparison.csv"):
     results = []
 
-    for model_type in ["logistic", "rf", "xgb"]:
+    for model_type in ["logistic", "rf", "xgb", "svm"]:
         print(f"\n🚀 Benchmarking model: {model_type.upper()}")
         trainer = PAModelTrainer(data_path=data_path, model_type=model_type)
         trainer.load_data()
