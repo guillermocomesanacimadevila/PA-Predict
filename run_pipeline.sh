@@ -16,14 +16,14 @@ show_help() {
   echo "Options:"
   echo "  --samples N       Number of synthetic samples to generate (default: 1000)"
   echo "  --seed N          Random seed for reproducibility (default: 42)"
-  echo "  --model TYPE      Model type: 'logistic' or 'rf' (default: rf)"
+  echo "  --model TYPE      Model type: 'logistic', 'rf', 'xgb', or 'svm' (default: rf)"
   echo "  --docker          Use Docker (must build container first)"
   echo "  --nextflow        Run pipeline using Nextflow"
   echo "  -h, --help        Show this help message"
   echo ""
   echo "Examples:"
   echo "  ./run_pipeline.sh"
-  echo "  ./run_pipeline.sh --samples 2000 --model logistic"
+  echo "  ./run_pipeline.sh --samples 2000 --model svm"
   echo "  ./run_pipeline.sh --docker"
   echo ""
 }
@@ -114,7 +114,8 @@ if $USE_DOCKER; then
       python Scripts/generate_report.py \
         --csv $CSV_REPORT \
         --output $HTML_REPORT \
-        --template $TEMPLATE_PATH
+        --template $TEMPLATE_PATH \
+        --figs_dir $FIGS_DIR
     "
   exit 0
 fi
@@ -125,7 +126,10 @@ fi
 
 if $USE_NEXTFLOW; then
   echo "⚙️  Running pipeline via Nextflow..."
-  nextflow run main.nf --samples "$SAMPLES" --seed "$SEED" --model_type "$MODEL_TYPE"
+  nextflow run main.nf \
+    --samples "$SAMPLES" \
+    --seed "$SEED" \
+    --model_type "$MODEL_TYPE"
   exit 0
 fi
 
@@ -155,11 +159,12 @@ python Scripts/benchmark_models.py \
   --data "$DATA_PATH" \
   --output_csv "$CSV_REPORT"
 
-echo "📝 Generating HTML report..."
+echo "📝 Generating HTML report with embedded visualizations..."
 python Scripts/generate_report.py \
   --csv "$CSV_REPORT" \
   --output "$HTML_REPORT" \
-  --template "$TEMPLATE_PATH"
+  --template "$TEMPLATE_PATH" \
+  --figs_dir "$FIGS_DIR"
 
 # ----------------------------
 # Completion
