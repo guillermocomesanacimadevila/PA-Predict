@@ -3,16 +3,20 @@
 <head>
   <title>PA ML Benchmark Report</title>
   <style>
-    body { font-family: Arial; margin: 2em; }
-    h1 { color: #003366; }
+    body { font-family: Arial, sans-serif; margin: 2em; }
+    h1, h2, h3, h4 { color: #003366; }
     table { width: 100%; border-collapse: collapse; margin-top: 1em; }
     th, td { border: 1px solid #ccc; padding: 0.6em; text-align: center; }
     th { background-color: #f0f0f0; }
+    img { max-width: 100%; margin-top: 1em; margin-bottom: 2em; border: 1px solid #ddd; padding: 0.5em; }
   </style>
 </head>
 <body>
+
   <h1>Pernicious Anaemia ML Report</h1>
   <p><strong>Date:</strong> {{ date }}</p>
+
+  <h2>Model Performance Comparison</h2>
   <table>
     <thead>
       <tr>
@@ -37,5 +41,21 @@
       {% endfor %}
     </tbody>
   </table>
+
+  <h2>Model Visualizations</h2>
+
+  {% for row in rows %}
+    <h3>{{ row['Model'] }}</h3>
+
+    {% for plot in ['confusion_matrix', 'feature_importance', 'roc_pr_curve', 'shap_summary'] %}
+      {% set key = plot + '_' + row['Model'] %}
+      {% if images[key] %}
+        <h4>{{ plot.replace('_', ' ').title() }}</h4>
+        <img src="data:image/png;base64,{{ images[key] }}" alt="{{ key }}">
+      {% endif %}
+    {% endfor %}
+
+  {% endfor %}
+
 </body>
 </html>
