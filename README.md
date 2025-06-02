@@ -13,7 +13,7 @@ This repository provides an end-to-end machine learning pipeline to simulate pat
 ## 🚀 Features
 
 - 📊 Synthetic dataset generation
-- 🤖 Logistic Regression, Random Forest, and XGBoost model training
+- 🤖 Logistic Regression, Random Forest, Support Vector Machine and XGBoost model training
 - 🧠 SHAP analysis for explainability
 - 📉 Visual reports: Confusion Matrix, ROC, PR curves, feature importance
 - 📄 Auto-generated HTML reports
