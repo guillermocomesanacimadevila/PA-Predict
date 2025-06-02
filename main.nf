@@ -5,12 +5,13 @@
 // --------------------
 params.samples     = 1000
 params.seed        = 42
-params.model_type  = 'rf'
+params.model_type  = 'rf'  // Options: 'logistic', 'rf', 'xgb', 'svm'
 params.outdir      = "output"
 params.dataset     = "${params.outdir}/simulated_pa_data.csv"
 params.report_csv  = "${params.outdir}/model_comparison.csv"
 params.report_html = "${params.outdir}/report.html"
 params.template    = "Scripts/report_template.html"
+params.figs_dir    = "${params.outdir}/figs"
 
 // --------------------
 // Process 1: Generate Synthetic Dataset
@@ -42,17 +43,17 @@ process TrainModel {
 
     output:
     path "${params.outdir}/model.pkl"
-    path("${params.outdir}/figs"), emit: figs_out
+    path("${params.figs_dir}"), emit: figs_out
 
     script:
     """
-    mkdir -p ${params.outdir}/figs
+    mkdir -p ${params.figs_dir}
     python Scripts/pa_model_trainer.py \\
       --data ${dataset} \\
       --model ${params.model_type} \\
       --savefigs \\
       --output_model ${params.outdir}/model.pkl \\
-      --output_figs_dir ${params.outdir}/figs
+      --output_figs_dir ${params.figs_dir}
     """
 }
 
@@ -84,6 +85,7 @@ process GenerateReport {
 
     input:
     path benchmark_csv from BenchmarkModels.benchmark_csv
+    path figs_dir from TrainModel.figs_out
 
     output:
     path "${params.report_html}"
@@ -93,7 +95,8 @@ process GenerateReport {
     python Scripts/generate_report.py \\
       --csv ${benchmark_csv} \\
       --output ${params.report_html} \\
-      --template ${params.template}
+      --template ${params.template} \\
+      --figs_dir ${figs_dir}
     """
 }
 
@@ -104,5 +107,5 @@ workflow {
     GenerateData()
     TrainModel(GenerateData.out)
     BenchmarkModels(GenerateData.out)
-    GenerateReport(BenchmarkModels.out)
+    GenerateReport(BenchmarkModels.out, TrainModel.out)
 }
