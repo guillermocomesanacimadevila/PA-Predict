@@ -10,6 +10,7 @@ import seaborn as sns
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
 from xgboost import XGBClassifier
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score,
@@ -51,8 +52,11 @@ class PAModelTrainer:
                 random_state=42
             )
             param_grid = {'n_estimators': [100, 200], 'max_depth': [3, 5, 7]}
+        elif self.model_type == 'svm':
+            model = SVC(probability=True, class_weight='balanced', random_state=42)
+            param_grid = {'C': [0.1, 1, 10], 'kernel': ['linear', 'rbf']}
         else:
-            raise ValueError("Model type must be 'logistic', 'rf', or 'xgb'.")
+            raise ValueError("Model type must be 'logistic', 'rf', 'xgb', or 'svm'.")
 
         grid = GridSearchCV(model, param_grid, cv=5, scoring='roc_auc', n_jobs=-1)
         grid.fit(self.X_train, self.y_train)
@@ -80,8 +84,12 @@ class PAModelTrainer:
             importances = self.model.feature_importances_
             title = f"Feature Importance ({self.model_type.upper()})"
             xlabel = "Importance"
+        elif self.model_type == 'svm' and hasattr(self.model, 'coef_'):
+            importances = self.model.coef_[0]
+            title = "Feature Importance (SVM - Linear)"
+            xlabel = "Coefficient"
         else:
-            return
+            return  # Skip plotting for unsupported cases (e.g., non-linear SVM)
 
         sorted_idx = np.argsort(np.abs(importances))[::-1]
         sorted_features = np.array(self.feature_names)[sorted_idx]
@@ -180,7 +188,7 @@ class PAModelTrainer:
 def main():
     parser = argparse.ArgumentParser(description="Train ML model for Pernicious Anaemia detection.")
     parser.add_argument("--data", type=str, required=True, help="Path to the input CSV dataset.")
-    parser.add_argument("--model", type=str, choices=["logistic", "rf", "xgb"], default="logistic", help="Model type.")
+    parser.add_argument("--model", type=str, choices=["logistic", "rf", "xgb", "svm"], default="logistic", help="Model type.")
     parser.add_argument("--savefigs", action="store_true", help="Save plots to disk.")
     parser.add_argument("--output_model", type=str, default="output/model.pkl", help="Path to save trained model.")
     parser.add_argument("--output_figs_dir", type=str, default="output/figs", help="Directory to save plots.")
