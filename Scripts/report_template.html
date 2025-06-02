@@ -1,31 +1,59 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>PA ML Benchmark Report</title>
   <style>
+    :root {
+      --bg: #f9f9f9;
+      --text: #1a1a1a;
+      --card: #ffffff;
+      --accent: #003366;
+      --border: #ddd;
+      --shadow: rgba(0, 0, 0, 0.05);
+    }
+
+    body.dark {
+      --bg: #1b1e23;
+      --text: #e2e8f0;
+      --card: #2a2e35;
+      --accent: #7dd3fc;
+      --border: #444;
+      --shadow: rgba(255, 255, 255, 0.05);
+    }
+
     body {
       font-family: 'Segoe UI', sans-serif;
-      margin: 2em;
-      background-color: #f9f9f9;
-      color: #333;
+      background-color: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 2em;
+      transition: all 0.3s ease;
     }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
     h1, h2, h3, h4 {
-      color: #003366;
+      color: var(--accent);
       margin-bottom: 0.5em;
     }
+
     h1 { font-size: 2.2em; }
     h2 { font-size: 1.6em; margin-top: 2em; }
     h3 { font-size: 1.3em; margin-top: 1.5em; }
     h4 { font-size: 1.1em; margin-top: 1em; }
 
     .section {
-      background: #fff;
+      background: var(--card);
       padding: 2em;
       border-radius: 12px;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+      box-shadow: 0 2px 8px var(--shadow);
       margin-bottom: 2em;
+      border: 1px solid var(--border);
     }
 
     table {
@@ -34,96 +62,119 @@
       margin-top: 1em;
       font-size: 0.95em;
     }
+
     th, td {
       padding: 0.8em;
-      border: 1px solid #ddd;
+      border: 1px solid var(--border);
       text-align: center;
     }
+
     th {
-      background-color: #eef2f7;
+      background-color: rgba(0, 0, 0, 0.05);
       font-weight: 600;
     }
-    tr:hover {
-      background-color: #f5faff;
-    }
 
-    .model-section {
-      margin-bottom: 3em;
+    tr:hover {
+      background-color: rgba(0, 0, 0, 0.03);
     }
 
     img {
       max-width: 100%;
       height: auto;
-      border: 1px solid #ccc;
-      border-radius: 6px;
+      border-radius: 8px;
       margin-top: 0.5em;
       margin-bottom: 1.5em;
-      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+      border: 1px solid var(--border);
+      box-shadow: 0 2px 5px var(--shadow);
     }
 
     .plot-caption {
       font-style: italic;
       font-size: 0.9em;
-      color: #666;
+      color: var(--text);
+      opacity: 0.7;
       margin-top: -0.5em;
       margin-bottom: 1em;
+    }
+
+    .dark-toggle {
+      position: fixed;
+      top: 1em;
+      right: 2em;
+      background: var(--card);
+      color: var(--text);
+      padding: 0.5em 1em;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.9em;
+      box-shadow: 0 1px 3px var(--shadow);
+      border: 1px solid var(--border);
+      transition: background 0.3s ease;
     }
   </style>
 </head>
 <body>
+  <div class="dark-toggle" onclick="toggleTheme()">🌗 Toggle Theme</div>
 
-  <div class="section">
-    <h1>Pernicious Anaemia ML Benchmark Report</h1>
-    <p><strong>Date:</strong> {{ date }}</p>
+  <div class="container">
+    <div class="section">
+      <h1>Pernicious Anaemia ML Benchmark Report</h1>
+      <p><strong>Date:</strong> {{ date }}</p>
+    </div>
+
+    <div class="section">
+      <h2>Model Performance Comparison</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Model</th>
+            <th>AUC</th>
+            <th>Accuracy</th>
+            <th>Precision</th>
+            <th>Recall</th>
+            <th>F1 Score</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr>
+            <td>{{ row['Model'] }}</td>
+            <td>{{ "%.3f"|format(row['AUC']) }}</td>
+            <td>{{ "%.3f"|format(row['Accuracy']) }}</td>
+            <td>{{ "%.3f"|format(row['Precision']) }}</td>
+            <td>{{ "%.3f"|format(row['Recall']) }}</td>
+            <td>{{ "%.3f"|format(row['F1']) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>Model Visualizations</h2>
+
+      {% for row in rows %}
+        <div class="model-section">
+          <h3>{{ row['Model'] }}</h3>
+
+          {% for plot in ['confusion_matrix', 'feature_importance', 'roc_pr_curve', 'shap_summary'] %}
+            {% set key = plot + '_' + row['Model'] %}
+            {% if images[key] %}
+              <h4>{{ plot.replace('_', ' ').title() }}</h4>
+              <img src="data:image/png;base64,{{ images[key] }}" alt="{{ key }}">
+              <div class="plot-caption">{{ plot.replace('_', ' ').title() }} for {{ row['Model'] }}</div>
+            {% endif %}
+          {% endfor %}
+
+        </div>
+      {% endfor %}
+    </div>
   </div>
 
-  <div class="section">
-    <h2>Model Performance Comparison</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>Model</th>
-          <th>AUC</th>
-          <th>Accuracy</th>
-          <th>Precision</th>
-          <th>Recall</th>
-          <th>F1 Score</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in rows %}
-        <tr>
-          <td>{{ row['Model'] }}</td>
-          <td>{{ "%.3f"|format(row['AUC']) }}</td>
-          <td>{{ "%.3f"|format(row['Accuracy']) }}</td>
-          <td>{{ "%.3f"|format(row['Precision']) }}</td>
-          <td>{{ "%.3f"|format(row['Recall']) }}</td>
-          <td>{{ "%.3f"|format(row['F1']) }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-
-  <div class="section">
-    <h2>Model Visualizations</h2>
-
-    {% for row in rows %}
-      <div class="model-section">
-        <h3>{{ row['Model'] }}</h3>
-
-        {% for plot in ['confusion_matrix', 'feature_importance', 'roc_pr_curve', 'shap_summary'] %}
-          {% set key = plot + '_' + row['Model'] %}
-          {% if images[key] %}
-            <h4>{{ plot.replace('_', ' ').title() }}</h4>
-            <img src="data:image/png;base64,{{ images[key] }}" alt="{{ key }}">
-            <div class="plot-caption">{{ plot.replace('_', ' ').title() }} for {{ row['Model'] }}</div>
-          {% endif %}
-        {% endfor %}
-      </div>
-    {% endfor %}
-
-  </div>
-
+  <script>
+    function toggleTheme() {
+      document.body.classList.toggle('dark');
+    }
+  </script>
 </body>
 </html>
