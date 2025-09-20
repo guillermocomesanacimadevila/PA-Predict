@@ -1,8 +1,6 @@
 # 🧬 Pernicious Anaemia Diagnosis Machine Learning Pipeline
 
-This repository provides an end-to-end machine learning pipeline to simulate patient data, train classification models for **Pernicious Anaemia (PA)** detection, benchmark multiple models, and generate interactive HTML reports — all orchestrated with **Nextflow** and optionally containerised with **Docker**.
-
-** FROM RAW CLINICAL BIOMARKER DATA **
+This repository provides an end-to-end machine learning pipeline to train classification models for **Pernicious Anaemia (PA)** detection, benchmark multiple models, and generate an interactive HTML report.
 
 ---
 
@@ -12,12 +10,11 @@ This repository provides an end-to-end machine learning pipeline to simulate pat
 
 ## 🚀 Features
 
-- 📊 Synthetic dataset generation
 - 🤖 Logistic Regression, Random Forest, Support Vector Machine and XGBoost model training
-- 🧠 SHAP analysis for explainability
-- 📉 Visual reports: Confusion Matrix, ROC, PR curves, feature importance
+- 🧠 SHAP analysis for explainability 
+- 📉 Visual reports: Confusion Matrix, ROC, PR curves, feature importance, hyperparameter sweeps
 - 📄 Auto-generated HTML reports
-- ⚙️ Executable via Bash, Docker, or Nextflow
+- ⚙️ Executable via Bash (virtual environment -> Conda)
 
 ---
 
