@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>PA ML Benchmark Report</title>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="header-left">
+      <h1 class="brand">Pernicious Anaemia • Model Benchmark</h1>
+      <div class="subline">Report date: <strong>{{ date }}</strong> • Models compared: <strong>{{ summary.n_models }}</strong></div>
+    </div>
+    <div class="header-right">
+      <button class="btn" id="themeToggle" aria-label="Toggle theme">🌗 Theme</button>
+      <button class="btn outline" id="downloadBtn" aria-label="Download report">⬇️ Save</button>
+    </div>
+  </header>
+
+  <!-- ===== Dataset Overview ===== -->
+  <section class="cards container">
+    <div class="card">
+      <div class="card-title">Samples</div>
+      <div class="card-value">{{ eda.n_samples if eda else '—' }}</div>
+      <div class="card-sub">Total cohort size</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Features</div>
+      <div class="card-value">{{ eda.n_features if eda else '—' }}</div>
+      <div class="card-sub">Predictor variables</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Imbalance ratio</div>
+      <div class="card-value">{{ "%.3f"|format(eda.imbalance_ratio) if eda else '—' }}</div>
+      <div class="card-sub">minority / majority</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Target entropy</div>
+      <div class="card-value">{{ "%.3f"|format(eda.entropy_bits) if eda else '—' }}</div>
+      <div class="card-sub">bits (Shannon)</div>
+    </div>
+  </section>
+
+  {% if eda %}
+  <section class="container section">
+    <h2 class="section-title">Class Balance & Missingness</h2>
+    <div class="viz-grid">
+      {% if images['eda_target_dist'] %}
+      <div class="viz-card">
+        <div class="viz-title">Class Distribution</div>
+        <img src="data:image/png;base64,{{ images['eda_target_dist'] }}" alt="Class distribution" class="zoomable"/>
+      </div>
+      {% endif %}
+      {% if images['eda_missing'] %}
+      <div class="viz-card">
+        <div class="viz-title">Missingness per Column</div>
+        <img src="data:image/png;base64,{{ images['eda_missing'] }}" alt="Missingness" class="zoomable"/>
+      </div>
+      {% endif %}
+      {% if images['eda_corr'] %}
+      <div class="viz-card">
+        <div class="viz-title">Feature Correlations</div>
+        <img src="data:image/png;base64,{{ images['eda_corr'] }}" alt="Correlation heatmap" class="zoomable"/>
+      </div>
+      {% endif %}
+      {% if images['eda_feature_hists'] %}
+      <div class="viz-card">
+        <div class="viz-title">Numeric Distributions</div>
+        <img src="data:image/png;base64,{{ images['eda_feature_hists'] }}" alt="Numeric histograms" class="zoomable"/>
+      </div>
+      {% endif %}
+      {% if images['eda_feature_hists_by_class'] %}
+      <div class="viz-card">
+        <div class="viz-title">Distributions by Class</div>
+        <img src="data:image/png;base64,{{ images['eda_feature_hists_by_class'] }}" alt="By-class histograms" class="zoomable"/>
+      </div>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="container section">
+    <h2 class="section-title">Table 1 — Cohort Characteristics</h2>
+    {% if t1_preview %}
+      <div class="table-wrap">
+        <table class="metrics-table">
+          <thead>
+            <tr>
+              {% for col in t1_preview.cols %}<th>{{ col }}</th>{% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in t1_preview.rows %}
+            <tr>
+              {% for col in t1_preview.cols %}<td>{{ r[col] }}</td>{% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">Showing first {{ t1_preview.rows|length }} rows. Full CSV: <code>{{ t1_preview.path }}</code></p>
+    {% else %}
+      <p class="muted">No Table 1 available.</p>
+    {% endif %}
+  </section>
+
+  <section class="container section">
+    <h2 class="section-title">Group Comparisons vs. Target</h2>
+    {% if gt_preview %}
+      <div class="table-wrap">
+        <table class="metrics-table">
+          <thead>
+            <tr>
+              {% for col in gt_preview.cols %}<th>{{ col }}</th>{% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in gt_preview.rows %}
+            <tr>
+              {% for col in gt_preview.cols %}<td>{{ r[col] }}</td>{% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">Showing first {{ gt_preview.rows|length }} rows. Full CSV: <code>{{ gt_preview.path }}</code></p>
+    {% else %}
+      <p class="muted">No group tests available.</p>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <!-- ===== Model Summary Cards (LogLoss-first) ===== -->
+  <section class="cards container">
+    <div class="card">
+      <div class="card-title">Best Model</div>
+      <div class="card-value">{{ summary.best_model }}</div>
+      <div class="card-sub">Top-ranked by LogLoss (↓)</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Best LogLoss</div>
+      <div class="card-value">{{ "%.4f"|format(summary.best_logloss) }}</div>
+      <div class="card-sub">Primary selection metric</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Best AUC</div>
+      <div class="card-value">{{ "%.3f"|format(summary.best_auc) }}</div>
+      <div class="card-sub">Area Under ROC</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Best Precision / Recall</div>
+      <div class="card-value">{{ "%.3f"|format(summary.best_precision) }} / {{ "%.3f"|format(summary.best_recall) }}</div>
+      <div class="card-sub">Positive class quality</div>
+    </div>
+  </section>
+
+  <!-- ===== Grid Search Diagnostics ===== -->
+  <section class="container section">
+    <h2 class="section-title">Grid Search Diagnostics</h2>
+    {% if images['GRID_OVERVIEW'] %}
+      <figure>
+        <img src="data:image/png;base64,{{ images['GRID_OVERVIEW'] }}" alt="Grid Search Overview" class="zoomable" style="width:100%;max-width:1100px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,0.08);" />
+        <figcaption class="muted">Overview of per-model grid-search panels (log loss; lower is better). Shaded bands indicate 95% CI across settings of other hyperparameters.</figcaption>
+      </figure>
+    {% endif %}
+
+    <div class="viz-grid">
+      {% for m in ["LOGISTIC","RF","XGB","SVM"] %}
+        {% set k = "gridsearch_panels_" + m %}
+        {% if images[k] %}
+          <div class="viz-card">
+            <div class="viz-title">{{ m }} — Grid Search (log loss)</div>
+            <img src="data:image/png;base64,{{ images[k] }}" alt="Grid {{m}}" class="zoomable"/>
+            {% set csvname = grid_csvs[m] if grid_csvs else None %}
+            {% if csvname %}
+              <div class="muted" style="margin-top:6px;font-size:.9rem">
+                Raw CV results: <code>{{ csvname }}</code>
+              </div>
+            {% endif %}
+          </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </section>
+
+  <!-- ===== Metrics Table ===== -->
+  <section class="container section">
+    <div class="toolbar">
+      <input id="searchInput" type="search" placeholder="Search model…" />
+      <div class="toolbar-right">
+        <label class="switch">
+          <input type="checkbox" id="hideNonTop" />
+          <span class="slider"></span>
+        </label>
+        <span class="switch-label">Show only top 1</span>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table id="metricsTable" class="metrics-table">
+        <thead>
+          <tr>
+            <th data-key="Model">Model</th>
+            <th data-key="LogLoss" class="sortable">LogLoss (↓)</th>
+            <th data-key="AUC" class="sortable">AUC</th>
+            <th data-key="Accuracy" class="sortable">Accuracy</th>
+            <th data-key="Precision" class="sortable">Precision</th>
+            <th data-key="Recall" class="sortable">Recall</th>
+            <th data-key="BestCV_LogLoss" class="sortable">Best CV LogLoss</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr data-model="{{ row['Model'] }}">
+            <td>
+              <span class="pill">{{ row['Model'] }}</span>
+            </td>
+            <td>{{ "%.4f"|format(row['LogLoss']) }}</td>
+            <td>{{ "%.3f"|format(row['AUC']) }}</td>
+            <td>{{ "%.3f"|format(row['Accuracy']) }}</td>
+            <td>{{ "%.3f"|format(row['Precision']) }}</td>
+            <td>{{ "%.3f"|format(row['Recall']) }}</td>
+            <td>{{ "%.4f"|format(row['BestCV_LogLoss']) if row.get('BestCV_LogLoss') is not none else "—" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ===== Per-model Visualizations ===== -->
+  <section class="container section">
+    <h2 class="section-title">Model Visualisations</h2>
+
+    {% for row in rows %}
+    <div class="model-block">
+      <div class="model-header">
+        <h3 class="model-title">{{ row['Model'] }}</h3>
+        <div class="model-metrics">
+          <span>LogLoss: <strong>{{ "%.4f"|format(row['LogLoss']) }}</strong></span>
+          <span>AUC: <strong>{{ "%.3f"|format(row['AUC']) }}</strong></span>
+          <span>Precision: <strong>{{ "%.3f"|format(row['Precision']) }}</strong></span>
+          <span>Recall: <strong>{{ "%.3f"|format(row['Recall']) }}</strong></span>
+        </div>
+        {% if row.get('BestParams') %}
+          <div class="model-metrics" style="opacity:.9">
+            <span>Best params:</span>
+            <code style="white-space:pre-wrap">{{ row['BestParams'] }}</code>
+          </div>
+        {% endif %}
+      </div>
+
+      <div class="viz-grid">
+        {% for plot in ['confusion_matrix', 'feature_importance', 'roc_pr_curve', 'shap_summary'] %}
+          {% set key = plot + '_' + row['Model'] %}
+          {% if images[key] %}
+            <div class="viz-card">
+              <div class="viz-title">{{ plot.replace('_',' ').title() }}</div>
+              <img src="data:image/png;base64,{{ images[key] }}" alt="{{ key }}" class="zoomable" />
+            </div>
+          {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </section>
+
+  <!-- Lightbox -->
+  <div id="lightbox" class="lightbox" aria-hidden="true">
+    <img id="lightboxImg" alt="Visualisation"/>
+  </div>
+
+  <footer class="site-footer">
+    <div>Generated by PA-Predict • {{ date }}</div>
+  </footer>
+
+  <script src="functionality.js"></script>
+</body>
+</html>
