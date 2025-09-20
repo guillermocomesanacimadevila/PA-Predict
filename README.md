@@ -30,20 +30,9 @@ Follow the steps below to set up and run the pipeline.
 ```bash
 git clone https://github.com/guillermocomesanacimadevila/PA-Predict.git
 ```
-```bash
-cd PA-Predict
-```
 
-### 2. Ensure Nextflow is Available
+### 2. Run PA-predict
 
 ```bash
-$($(find / -name nextflow -type f 2>/dev/null | head -n 1))
+cd PA-Predict/ && chmod +x pa_predict.sh && ./pa_predict.sh
 ```
-
-### 3. Run the Pipeline
-
-```bash
-chmod +x run_pipeline.sh && ./run_pipeline.sh
-```
-
----
