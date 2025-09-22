@@ -38,7 +38,7 @@ cd PA-Predict/ && chmod +x pa_predict.sh && ./pa_predict.sh
 
 ```bash
 bash -lc 'repo=$(find ~ -type d -name "PA-Predict" 2>/dev/null | head -n1); \
-  if [ -z "$repo" ]; then echo "❌ PA-Predict not found. Clone it first."; exit 1; fi; \
+  if [ -z "$repo" ]; then echo "PA-Predict not found. Clone it first."; exit 1; fi; \
   cd "$repo"; chmod +x pa_predict.sh; ./pa_predict.sh --open-report'
 ```
 
