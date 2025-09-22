@@ -14,4 +14,9 @@ dependencies:
   - jinja2
   - joblib
   - scipy
+  - statsmodels          
+  - imbalanced-learn     
   - pip
+  - pip:
+      - tqdm             
+      - kaleido          
