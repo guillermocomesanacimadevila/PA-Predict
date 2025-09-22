@@ -121,15 +121,25 @@ a:hover{ text-decoration: underline }
 
 /* ----- KPI Cards ----- */
 .cards{
-  display:grid; grid-template-columns:repeat(4,1fr); gap:16px;
+  display:grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap:16px;
   margin:16px 0;
+
+  /* NEW → center the whole KPI row */
+  max-width:980px;         /* adjust width as needed */
+  margin-left:auto;
+  margin-right:auto;
+  place-content:center;
 }
 .card{
   background:var(--card-elev);
   border:1px solid var(--border);
   border-radius:16px;
   padding:16px 18px; min-height:116px;
-  display:flex; flex-direction:column; justify-content:center;
+  display:flex; flex-direction:column; justify-content:center; 
+  align-items:center;            
+  text-align:center;            
   transition: transform .08s ease, box-shadow .2s ease;
 }
 .card:hover{ transform: translateY(-2px) }
@@ -153,7 +163,7 @@ a:hover{ text-decoration: underline }
 #searchInput{
   width:280px; max-width:60%; padding:10px 12px; border-radius:10px;
   border:1px solid var(--border); background:var(--bg-soft); color:var(--text);
-  transition:border .15s, box-shadow .15s, background .2s;
+  transition:border .15s, box-shadow .15s, background .2s ease;
   font: 500 0.95rem Inter, sans-serif;
 }
 #searchInput:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 4px var(--ring) }
