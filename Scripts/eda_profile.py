@@ -2,12 +2,14 @@
 """
 Quick EDA for PA-Predict (publishable aesthetics)
 - Figures: class balance, missingness, correlations, numeric dists (+ by class)
+- PCA + t-SNE panel saved as PCA_TSNE.png
 - Table 1: descriptive stats (overall + by class)
 - Group tests: Welch's t-test (numeric), Chi-square (categorical) vs target
 - Summary JSON for dashboard
 
 Outputs (defaults):
   output/figs/eda_*.png
+  output/figs/PCA_TSNE.png
   output/eda_summary.json
   output/eda_table1.csv
   output/eda_group_tests.csv
@@ -18,6 +20,9 @@ import numpy as np
 import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
 
 # ────────────────────────────────────────────────────────────────
 # Optional stats (Welch t / Chi2) — add "scipy" to environment.yml
@@ -69,6 +74,66 @@ mpl.rcParams.update({
 # ────────────────────────────────────────────────────────────────
 # Helpers
 # ────────────────────────────────────────────────────────────────
+
+def save_pca_tsne(df: pd.DataFrame, target_col: str, out_path: str, random_state: int = 7):
+    """Saves a 1×2 PCA+t-SNE panel. Returns out_path on success, else None."""
+    if target_col not in df.columns:
+        print(f"[PCA+TSNE] target '{target_col}' not in dataframe; skipping.")
+        return None
+
+    # keep only numeric features
+    X = df.drop(columns=[target_col])
+    y = df[target_col].astype(int).values
+    X_num = X.select_dtypes(include=[np.number]).copy()
+    if X_num.shape[1] < 2 or len(X_num) < 5:
+        print(f"[PCA+TSNE] Not enough numeric data (n={len(X_num)}, d={X_num.shape[1]}). Skipping.")
+        return None
+
+    # simple impute (median) for any NAs
+    X_num = X_num.fillna(X_num.median())
+
+    # scale
+    X_scaled = StandardScaler().fit_transform(X_num.values)
+
+    # PCA
+    pca = PCA(n_components=2, random_state=random_state)
+    X_pca = pca.fit_transform(X_scaled)
+    ev = pca.explained_variance_ratio_
+    pca_title = f"PCA (2D) — var: {100*ev[0]:.1f}% + {100*ev[1]:.1f}%"
+
+    # t-SNE (pick safe perplexity)
+    # perplexity must be < n_samples; use ~min(30, (n-1)//3) with floor 5
+    n = len(X_scaled)
+    perfs = max(5, min(30, (n - 1) // 3))
+    tsne = TSNE(n_components=2, init="pca", learning_rate="auto",
+                perplexity=perfs, random_state=random_state)
+    X_tsne = tsne.fit_transform(X_scaled)
+
+    # plot
+    fig, axes = plt.subplots(1, 2, figsize=(12.8, 5.6), squeeze=False)
+    ax1, ax2 = axes[0, 0], axes[0, 1]
+    colors = {0: "#4464ad", 1: "#e07a5f"}
+    labels = {0: "Control (0)", 1: "PA (1)"}
+
+    for cls in [0, 1]:
+        mask = (y == cls)
+        ax1.scatter(X_pca[mask, 0], X_pca[mask, 1], s=20, alpha=0.70, c=colors.get(cls, "#999"), label=labels.get(cls, str(cls)))
+        ax2.scatter(X_tsne[mask, 0], X_tsne[mask, 1], s=20, alpha=0.70, c=colors.get(cls, "#999"), label=labels.get(cls, str(cls)))
+
+    ax1.set_title(pca_title); ax1.set_xlabel("PC1"); ax1.set_ylabel("PC2"); ax1.legend(frameon=False)
+    ax2.set_title(f"t-SNE (2D) — PCA init (perplexity={perfs})"); ax2.set_xlabel("Dim 1"); ax2.set_ylabel("Dim 2"); ax2.legend(frameon=False)
+
+    for ax in (ax1, ax2):
+        ax.spines["left"].set_alpha(0.7)
+        ax.spines["bottom"].set_alpha(0.7)
+        ax.grid(True, alpha=0.25, linestyle="--")
+
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    fig.savefig(out_path, bbox_inches="tight", dpi=300)
+    plt.close(fig)
+    print(f"[PCA+TSNE] Saved: {out_path}")
+    return out_path
+
 def ensure_dir(p: str):
     d = os.path.dirname(p) if os.path.splitext(p)[1] else p
     if d:
@@ -335,6 +400,7 @@ def profile_dataset(csv_path: str, target_col: str, figs_dir: str, out_json: str
     p_corr = make_fig_corr(X[num_cols], figs_dir) if len(num_cols) >= 2 else None
     p_hists = make_fig_num_hists(X[num_cols], figs_dir) if len(num_cols) else None
     p_hists_by_cls = make_fig_num_hists_by_class(X[num_cols], y, figs_dir) if len(num_cols) else None
+    p_pca_tsne = save_pca_tsne(df, target_col=target_col, out_path=os.path.join(figs_dir, "PCA_TSNE.png"))
 
     # tables
     t1 = table1_descriptives(df, target_col)
@@ -360,7 +426,8 @@ def profile_dataset(csv_path: str, target_col: str, figs_dir: str, out_json: str
             "eda_corr": os.path.basename(p_corr) if p_corr else None,
             "eda_missing": os.path.basename(p_missing) if p_missing else None,
             "eda_feature_hists": os.path.basename(p_hists) if p_hists else None,
-            "eda_feature_hists_by_class": os.path.basename(p_hists_by_cls) if p_hists_by_cls else None
+            "eda_feature_hists_by_class": os.path.basename(p_hists_by_cls) if p_hists_by_cls else None,
+            "PCA_TSNE": os.path.basename(p_pca_tsne) if p_pca_tsne else None
         },
         "artifacts": {
             "table1_csv": os.path.basename(out_table1_csv),
