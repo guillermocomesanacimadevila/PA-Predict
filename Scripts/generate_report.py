@@ -44,9 +44,22 @@ def build_images_dict(figs_dir: str):
             path = os.path.join(figs_dir, f"{plot.lower()}_{model.lower()}.png")
             images[key] = _b64(path)
 
-    # Global/overview images
-    for key, fname in GLOBAL_ASSETS.items():
-        images[key] = _b64(os.path.join(figs_dir, fname))
+    # Global/overview images (be forgiving about file names / cases)
+    # Try standard name first; if missing, try an alternative.
+    def _try_many(candidates):
+        for c in candidates:
+            b64 = _b64(os.path.join(figs_dir, c))
+            if b64: 
+                return b64
+        return None
+
+    images["GRID_OVERVIEW"]   = _try_many(["gridsearch_overview.png"])
+    images["CALIBRATION_GRID"] = _try_many(["calibration_grid.png"])
+    images["PCA_TSNE"]        = _try_many(["pca_tsne.png", "PCA_TSNE.png"])
+    images["CM_GRID"]         = _try_many(["confusion_grid.png"])
+    images["ROCPR_GRID"]      = _try_many(["rocpr_grid.png"])
+    images["FI_GRID"]         = _try_many(["feature_importance_grid.png"])
+    images["SHAP_GRID"]       = _try_many(["shap_grid.png"])
 
     return images
 
@@ -116,8 +129,12 @@ def add_eda_images(images, figs_dir, eda):
     for k in ["eda_target_dist", "eda_corr", "eda_missing", "eda_feature_hists", "eda_feature_hists_by_class"]:
         fname = eda.get("figs", {}).get(k)
         images[k] = _b64(os.path.join(figs_dir, fname)) if fname else None
-    return images
 
+    pca_tsne_fname = eda.get("figs", {}).get("PCA_TSNE")
+    if pca_tsne_fname:
+        images["PCA_TSNE"] = _b64(os.path.join(figs_dir, pca_tsne_fname)) or images.get("PCA_TSNE")
+
+    return images
 def preview_csv(path, n=10):
     if not os.path.exists(path):
         return None
