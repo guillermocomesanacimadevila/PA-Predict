@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────── #
 #                  PA-ML Runner (ALL MODELS)                      #
-#     CSV (fzf) → EDA → Benchmark (logistic, RF, XGB, SVM) → UI   #
-#      Conda env from Setup/environment.yml + fzf (auto/fallback) #
+#   Zero-dep bootstrap: system Conda or local Miniconda + fzf     #
+#   CSV → EDA → Benchmark (logistic, RF, XGB, SVM) → HTML report  #
 # ──────────────────────────────────────────────────────────────── #
 set -euo pipefail
 
@@ -10,45 +10,52 @@ set -euo pipefail
 RED="\033[31m"; YELLOW="\033[33m"; GREEN="\033[32m"; BLUE="\033[34m"; CYAN="\033[36m"; NC="\033[0m"
 
 # ===============  Defaults / Paths  ===============
-OUTPUT_DIR="output"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+OUTPUT_DIR="${REPO_ROOT}/output"
 FIGS_DIR="${OUTPUT_DIR}/figs"
 CSV_REPORT="${OUTPUT_DIR}/model_comparison.csv"
 HTML_REPORT="${OUTPUT_DIR}/report.html"
-TEMPLATE_PATH="Scripts/Frontend/index.html"   # <- dashboard
+TEMPLATE_PATH="${REPO_ROOT}/Scripts/Frontend/index.html"
+
+# Local tool cache (no sudo needed)
+LOCAL_BIN="${REPO_ROOT}/.bin"
+LOCAL_CONDA="${REPO_ROOT}/.miniconda"
+LOCAL_CONDA_SH="${LOCAL_CONDA}/etc/profile.d/conda.sh"
 
 # Conda env
 ENV_NAME="pa-predict"
-ENV_FILE="Setup/environment.yml"
+ENV_FILE="${REPO_ROOT}/Setup/environment.yml"
 
 # Controls
 SELECTED_CSV=""
+AUTO_OPEN=true
 USE_FZF=true
-AUTO_OPEN=true   # enable via --open-report
 
 # ===============  Help  ===============
 show_help() {
   cat <<'EOF'
 
-🚀 PA-ML Pipeline Runner (ALL MODELS)
+🚀 PA-ML Pipeline Runner (ALL MODELS) — Zero-dep bootstrap
 
 Usage:
   ./pa_predict.sh [options]
 
 Options:
-  --data PATH.csv         Use this CSV directly (skips interactive picker)
-  --output-dir DIR        Output directory (default: output)
-  --figs-dir DIR          Figures directory (default: output/figs)
+  --data PATH.csv         Use this CSV directly (skips picker)
+  --output-dir DIR        Output directory (default: ./output)
+  --figs-dir DIR          Figures directory (default: ./output/figs)
   --template PATH.html    Report template (default: Scripts/Frontend/index.html)
   --no-fzf                Disable fzf; use numbered fallback
   --open-report           Try to open the HTML report when finished
   -h, --help              Show this help
 
 Flow:
-  1) Ensure conda exists; create env from Setup/environment.yml if needed
-  2) Pick dataset (fzf over ./Data and ./data unless --data provided)
-  3) EDA (Table 1, group tests, class balance, missingness, dists, corr)
+  0) Prefer system Conda; otherwise bootstrap local Miniconda in ./.miniconda
+  1) Create conda env from Setup/environment.yml if missing
+  2) Pick dataset (portable fzf in ./.bin or numbered fallback)
+  3) EDA (stats, balance, missingness, histograms, correlations)
   4) Benchmark ALL models (logistic, RF, XGB, SVM) + save plots
-  5) Generate HTML dashboard with embedded plots & EDA
+  5) Generate HTML dashboard (embedded images)
 
 EOF
 }
@@ -56,155 +63,274 @@ EOF
 # ===============  CLI Parsing  ===============
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --data)         SELECTED_CSV="$2"; shift 2 ;;
-    --output-dir)   OUTPUT_DIR="$2"; shift 2 ;;
-    --figs-dir)     FIGS_DIR="$2"; shift 2 ;;
-    --template)     TEMPLATE_PATH="$2"; shift 2 ;;
+    --data)         SELECTED_CSV="${2:?}"; shift 2 ;;
+    --output-dir)   OUTPUT_DIR="${2:?}"; shift 2 ;;
+    --figs-dir)     FIGS_DIR="${2:?}"; shift 2 ;;
+    --template)     TEMPLATE_PATH="${2:?}"; shift 2 ;;
     --no-fzf)       USE_FZF=false; shift ;;
     --open-report)  AUTO_OPEN=true; shift ;;
     -h|--help)      show_help; exit 0 ;;
     *) echo -e "${RED}❌ Unknown option: $1${NC}"; show_help; exit 1 ;;
   esac
 done
-
-# Re-derive dependent paths if user changed DIRs
 CSV_REPORT="${OUTPUT_DIR}/model_comparison.csv"
 HTML_REPORT="${OUTPUT_DIR}/report.html"
 
-# ===============  OS / Platform detection  ===============
+# ===============  OS / Arch detection  ===============
 OS="$(uname -s)"
+ARCH="$(uname -m)"
 IS_LINUX=false; IS_MAC=false; IS_WSL=false
 case "$OS" in
   Linux*)  IS_LINUX=true ;;
   Darwin*) IS_MAC=true ;;
 esac
-if grep -qi microsoft /proc/version 2>/dev/null; then IS_WSL=true; fi
-echo -e "${CYAN}🔎 System: ${OS}  (WSL: ${IS_WSL})${NC}"
+if [[ -f /proc/version ]] && grep -qi microsoft /proc/version 2>/dev/null; then IS_WSL=true; fi
+echo -e "${CYAN}🔎 System: ${OS} (${ARCH})  (WSL: ${IS_WSL})${NC}"
 
 # ===============  Utils  ===============
-require_cmd() { command -v "$1" >/dev/null 2>&1 || { echo -e "${RED}❌ Missing command: $1${NC}"; return 1; }; }
+mkdir -p "$LOCAL_BIN"
+export PATH="${LOCAL_BIN}:$PATH"
+
+# --- NEW: minimal core tools sanity check (no sudo; just helpful errors) ---
+ensure_core_tools() {
+  local missing=()
+  for cmd in uname grep awk sed find tar gzip; do
+    command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+  done
+  if ((${#missing[@]})); then
+    echo -e "${RED}❌ Missing required system utilities:${NC} ${missing[*]}"
+    echo -e "   Please install them via your package manager and re-run."
+    exit 1
+  fi
+}
+ensure_core_tools
+
+# --- UPDATED: download with curl → wget → Python (urllib) fallback ---
+download() {
+  # usage: download URL DEST
+  local url="$1" dest="$2"
+  if command -v curl >/dev/null 2>&1; then
+    curl -L --retry 3 --fail -o "$dest" "$url" && return 0
+  fi
+  if command -v wget >/dev/null 2>&1; then
+    wget -q -O "$dest" "$url" && return 0
+  fi
+  # Python fallback (no internet libs beyond stdlib)
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$url" "$dest" <<'PY'
+import sys, urllib.request
+url, dest = sys.argv[1], sys.argv[2]
+urllib.request.urlretrieve(url, dest)
+PY
+    return 0
+  elif command -v python >/dev/null 2>&1; then
+    python - "$url" "$dest" <<'PY'
+import sys, urllib.request
+url, dest = sys.argv[1], sys.argv[2]
+urllib.request.urlretrieve(url, dest)
+PY
+    return 0
+  fi
+  echo -e "${RED}❌ Need curl, wget, or python to download: $url${NC}"
+  exit 1
+}
 
 open_html() {
   local f="$1"
-  if [[ ! -f "$f" ]]; then
-    echo -e "${YELLOW}⚠️  Report not found: $f${NC}"
-    return
-  fi
+  [[ -f "$f" ]] || { echo -e "${YELLOW}⚠️  Report not found: $f${NC}"; return; }
   if $IS_WSL && command -v wslview >/dev/null 2>&1; then wslview "$f" >/dev/null 2>&1 &
   elif $IS_MAC && command -v open >/dev/null 2>&1; then open "$f" >/dev/null 2>&1 &
   elif $IS_LINUX && command -v xdg-open >/dev/null 2>&1; then xdg-open "$f" >/dev/null 2>&1 &
   else echo -e "${YELLOW}ℹ️  Open manually: file://$f${NC}"; fi
 }
 
-install_fzf_if_missing() {
+# ===============  Portable fzf (no sudo)  ===============
+ensure_portable_fzf() {
+  if ! $USE_FZF; then return 0; fi
   if command -v fzf >/dev/null 2>&1; then return 0; fi
-  echo -e "${YELLOW}⚙️  fzf not found — attempting installation...${NC}"
-  if $IS_MAC && command -v brew >/dev/null 2>&1; then
-    brew list fzf >/dev/null 2>&1 || brew install fzf
-    "$(brew --prefix)/opt/fzf/install" --no-bash --no-fish --no-key-bindings --no-completion >/dev/null 2>&1 || true
-  elif $IS_LINUX && command -v apt-get >/dev/null 2>&1; then
-    sudo apt-get update -qq || true
-    sudo apt-get install -y fzf || true
-  fi
-  # source fallback
-  if ! command -v fzf >/dev/null 2>&1; then
-    tmpdir="$(mktemp -d)"; git clone --depth 1 https://github.com/junegunn/fzf.git "$tmpdir/fzf" >/dev/null 2>&1 || true
-    bash "$tmpdir/fzf/install" --bin --no-update-rc --no-key-bindings --no-completion >/dev/null 2>&1 || true
-    mkdir -p "$HOME/.local/bin"
-    if [[ -f "$tmpdir/fzf/bin/fzf" ]]; then
-      cp "$tmpdir/fzf/bin/fzf" "$HOME/.local/bin/fzf"
-      export PATH="$HOME/.local/bin:$PATH"
+
+  echo -e "${YELLOW}⚙️  Installing portable fzf to ${LOCAL_BIN} ...${NC}"
+  local fzf_ver="0.53.0"  # known good
+  local pkg=""
+  if $IS_MAC; then
+    if [[ "$ARCH" == "arm64" ]]; then
+      pkg="fzf-${fzf_ver}-darwin_arm64.tar.gz"
+    else
+      pkg="fzf-${fzf_ver}-darwin_amd64.tar.gz"
     fi
-    rm -rf "$tmpdir"
-  fi
-  if command -v fzf >/dev/null 2>&1; then
-    echo -e "${GREEN}✅ fzf installed.${NC}"
+  elif $IS_LINUX; then
+    case "$ARCH" in
+      x86_64|amd64) pkg="fzf-${fzf_ver}-linux_amd64.tar.gz" ;;
+      aarch64|arm64) pkg="fzf-${fzf_ver}-linux_arm64.tar.gz" ;;
+      armv7l) pkg="fzf-${fzf_ver}-linux_armv7.tar.gz" ;;
+      *) echo -e "${YELLOW}⚠️  Unsupported arch for fzf binary (${ARCH}). Fallback UI will be used.${NC}"; return 0 ;;
+    esac
   else
-    echo -e "${YELLOW}⚠️  Could not auto-install fzf. Fallback UI will be used.${NC}"
+    echo -e "${YELLOW}⚠️  Unsupported OS for fzf binary. Fallback UI will be used.${NC}"; return 0
+  fi
+
+  local url="https://github.com/junegunn/fzf/releases/download/v${fzf_ver}/${pkg}"
+  local tmp; tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  download "$url" "${tmp}/${pkg}" || { echo -e "${YELLOW}⚠️  fzf download failed; using fallback UI.${NC}"; return 0; }
+  tar -xzf "${tmp}/${pkg}" -C "$tmp" >/dev/null 2>&1 || true
+  if [[ -f "${tmp}/fzf" ]]; then
+    mv "${tmp}/fzf" "${LOCAL_BIN}/fzf"
+    chmod +x "${LOCAL_BIN}/fzf"
+    echo -e "${GREEN}✅ fzf installed locally.${NC}"
+  else
+    echo -e "${YELLOW}⚠️  fzf install failed; using fallback UI.${NC}"
   fi
 }
 
-# ===============  Conda env management via conda run  ===============
-ensure_conda_and_env() {
-  if ! command -v conda >/dev/null 2>&1; then
-    echo -e "${RED}❌ Conda not found in PATH.${NC}"
-    echo -e "  Install Miniconda, then re-run:"
-    if $IS_MAC; then
-      echo "  https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-$(uname -m).sh"
-    else
-      echo "  https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"
+# ===============  Conda: prefer system, fallback to local  ===============
+source_conda_shell() {
+  # 1) If CONDA_EXE is set & shell hook is available, use it.
+  if [[ -n "${CONDA_EXE:-}" ]]; then
+    local base; base="$("$CONDA_EXE" info --base 2>/dev/null || true)"
+    if [[ -n "$base" && -f "$base/etc/profile.d/conda.sh" ]]; then
+      # shellcheck disable=SC1090
+      source "$base/etc/profile.d/conda.sh"
+      return 0
     fi
+  fi
+  # 2) If 'conda' is in PATH, try its base.
+  if command -v conda >/dev/null 2>&1; then
+    local base; base="$(conda info --base 2>/dev/null || true)"
+    if [[ -n "$base" && -f "$base/etc/profile.d/conda.sh" ]]; then
+      # shellcheck disable=SC1090
+      source "$base/etc/profile.d/conda.sh"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+install_local_miniconda_if_needed() {
+  # If local conda hook exists, just source it.
+  if [[ -f "$LOCAL_CONDA_SH" ]]; then
+    # shellcheck disable=SC1090
+    source "$LOCAL_CONDA_SH"
+    return 0
+  fi
+
+  # If directory exists but conda.sh missing, try updating in place (-u).
+  if [[ -d "$LOCAL_CONDA" && ! -f "$LOCAL_CONDA_SH" ]]; then
+    echo -e "${YELLOW}⚙️  Repairing local Miniconda in ${LOCAL_CONDA} ...${NC}"
+    _install_miniconda "-u"
+    # shellcheck disable=SC1090
+    source "$LOCAL_CONDA_SH"
+    return 0
+  fi
+
+  echo -e "${YELLOW}🔧 Installing local Miniconda into ${LOCAL_CONDA} (no sudo)...${NC}"
+  _install_miniconda ""
+  # shellcheck disable=SC1090
+  source "$LOCAL_CONDA_SH"
+  echo -e "${GREEN}✅ Local Miniconda ready.${NC}"
+}
+
+_install_miniconda() {
+  local update_flag="$1"  # "" or "-u"
+  mkdir -p "$LOCAL_CONDA"
+  local installer="" url=""
+
+  if $IS_MAC; then
+    if [[ "$ARCH" == "arm64" ]]; then
+      installer="Miniconda3-latest-MacOSX-arm64.sh"
+    else
+      installer="Miniconda3-latest-MacOSX-x86_64.sh"
+    fi
+    url="https://repo.anaconda.com/miniconda/${installer}"
+  elif $IS_LINUX; then
+    case "$ARCH" in
+      x86_64|amd64) installer="Miniconda3-latest-Linux-x86_64.sh" ;;
+      aarch64|arm64) installer="Miniconda3-latest-Linux-aarch64.sh" ;;
+      *) echo -e "${RED}❌ Unsupported Linux arch for Miniconda: ${ARCH}${NC}"; exit 1 ;;
+    esac
+    url="https://repo.anaconda.com/miniconda/${installer}"
+  else
+    echo -e "${RED}❌ Unsupported OS for Miniconda bootstrap.${NC}"
     exit 1
   fi
-  # Enable conda shell funcs; needed for `conda env list`
-  source "$(conda info --base)/etc/profile.d/conda.sh" 2>/dev/null || true
 
+  local tmp; tmp="$(mktemp -d)"
+  download "$url" "${tmp}/${installer}"
+  bash "${tmp}/${installer}" -b -p "$LOCAL_CONDA" $update_flag
+  rm -rf "$tmp"
+
+  if [[ ! -f "$LOCAL_CONDA_SH" ]]; then
+    echo -e "${RED}❌ Miniconda installation failed.${NC}"
+    exit 1
+  fi
+}
+
+resolve_conda() {
+  if source_conda_shell; then
+    echo -e "${GREEN}✅ Using system Conda at: $(conda info --base)${NC}"
+    return 0
+  fi
+  install_local_miniconda_if_needed
+  echo -e "${GREEN}✅ Using local Conda at: ${LOCAL_CONDA}${NC}"
+}
+
+# ===============  Conda env creation/use  ===============
+ensure_conda_env() {
   if [[ ! -f "$ENV_FILE" ]]; then
     echo -e "${RED}❌ Missing environment file: $ENV_FILE${NC}"
     exit 1
   fi
 
-  if ! conda env list | grep -qw "$ENV_NAME"; then
-    echo -e "${YELLOW}🔧 Creating conda env '$ENV_NAME' from $ENV_FILE...${NC}"
-    conda env create -f "$ENV_FILE" -n "$ENV_NAME" || { echo -e "${RED}❌ Env creation failed.${NC}"; exit 1; }
+  if ! conda env list | awk '{print $1}' | grep -qx "$ENV_NAME"; then
+    echo -e "${YELLOW}🔧 Creating conda env '${ENV_NAME}' from $ENV_FILE ...${NC}"
+    conda env create -n "$ENV_NAME" -f "$ENV_FILE"
     echo -e "${GREEN}✅ Env created.${NC}"
   fi
 
-  # Sanity: ensure conda run works
+  # Verify conda run works
   if ! conda run -n "$ENV_NAME" python -c "import sys; print(sys.version)" >/dev/null 2>&1; then
-    echo -e "${YELLOW}ℹ️  Updating conda to enable 'conda run'...${NC}"
-    conda update -n base -y conda
+    echo -e "${YELLOW}ℹ️  Updating conda base to enable 'conda run'...${NC}"
+    conda update -n base -y conda || true
   fi
   if ! conda run -n "$ENV_NAME" python -c "import sys; print(sys.version)" >/dev/null 2>&1; then
-    echo -e "${RED}❌ 'conda run' failed for env '$ENV_NAME'.${NC}"
+    echo -e "${RED}❌ 'conda run' failed for env '${ENV_NAME}'.${NC}"
     exit 1
   fi
 }
 
-# ===============  Preflight (env-level) using conda run  ===============
+# ===============  Preflight (inside env)  ===============
 preflight_env() {
-  echo -e "${CYAN}🔎 Preflight checks (inside env via conda run)...${NC}"
-  # Python version
+  echo -e "${CYAN}🔎 Preflight checks (inside env)...${NC}"
+
   conda run -n "$ENV_NAME" python - <<'PY'
-import sys
+import sys, importlib
 maj, min = sys.version_info[:2]
 assert (maj, min) >= (3,9), f"Python >=3.9 required, found {maj}.{min}"
-PY
-
-  # Required packages (include scipy for group tests)
-  conda run -n "$ENV_NAME" python - <<'PY'
-import importlib, sys
 pkgs = ["numpy","pandas","sklearn","xgboost","shap","matplotlib","seaborn","jinja2","joblib","scipy"]
 missing = [p for p in pkgs if importlib.util.find_spec(p) is None]
 if missing:
-    raise SystemExit("Missing: " + ", ".join(missing))
+    raise SystemExit("Missing packages: " + ", ".join(missing))
 PY
   echo -e "${GREEN}✅ Python deps OK${NC}"
 
-  # Required project files
-  for f in "Scripts/benchmark_models.py" "Scripts/generate_report.py" "Scripts/eda_profile.py" "$TEMPLATE_PATH"; do
+  # Project files exist?
+  for f in \
+    "${REPO_ROOT}/Scripts/benchmark_models.py" \
+    "${REPO_ROOT}/Scripts/generate_report.py" \
+    "${REPO_ROOT}/Scripts/eda_profile.py" \
+    "$TEMPLATE_PATH"
+  do
     [[ -f "$f" ]] || { echo -e "${RED}❌ Missing file: $f${NC}"; exit 1; }
   done
   echo -e "${GREEN}✅ Script/template files OK${NC}"
 
-  # Disk space & writability
-  FREE_KB=$(df -Pk "$PWD" | awk 'NR==2{print $4}')
-  FREE_MB=$((FREE_KB/1024))
-  NEED_MB=200
-  if [[ -n "${FREE_MB:-}" && "$FREE_MB" -lt "$NEED_MB" ]]; then
-    echo -e "${RED}❌ Not enough disk space: ${FREE_MB}MB free (< ${NEED_MB}MB).${NC}"; exit 1
-  fi
-  mkdir -p "$OUTPUT_DIR" "$FIGS_DIR" 2>/dev/null || { echo -e "${RED}❌ Cannot create output dirs${NC}"; exit 1; }
-  touch "$OUTPUT_DIR/.write_test" 2>/dev/null || { echo -e "${RED}❌ No write permission in $OUTPUT_DIR${NC}"; exit 1; }
-  rm -f "$OUTPUT_DIR/.write_test"
+  # Output area
+  mkdir -p "$OUTPUT_DIR" "$FIGS_DIR"
+  touch "${OUTPUT_DIR}/.write_test" && rm -f "${OUTPUT_DIR}/.write_test" || {
+    echo -e "${RED}❌ No write access to ${OUTPUT_DIR}${NC}"; exit 1; }
+
   echo -e "${GREEN}✅ Output directory writable${NC}"
 
-  # fzf note
-  if $USE_FZF && ! command -v fzf >/dev/null 2>&1; then
-    echo -e "${YELLOW}ℹ️  fzf not available — using fallback selection UI.${NC}"
-  fi
-
-  # Safe plotting + tame BLAS/OMP for child processes
+  # Matplotlib headless + keep BLAS tame
   export MPLBACKEND=Agg
   export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
   export MKL_NUM_THREADS=${MKL_NUM_THREADS:-1}
@@ -212,7 +338,7 @@ PY
   export KMP_DUPLICATE_LIB_OK=TRUE
 }
 
-# ===============  CSV Selector (fzf or fallback)  ===============
+# ===============  CSV Selector  ===============
 select_csv() {
   local prompt="${1:-CSV > }"; shift || true
   local roots=("$@"); [[ ${#roots[@]} -eq 0 ]] && roots=("Data" "data")
@@ -224,11 +350,12 @@ select_csv() {
   if [[ ${#files[@]} -eq 0 ]]; then
     echo -e "${RED}❌ No CSV files found in: ${roots[*]}${NC}" 1>&2; return 1
   fi
+
   local file=""
   if $USE_FZF && command -v fzf >/dev/null 2>&1; then
     export TERM=${TERM:-xterm-256color}
     file="$(printf '%s\n' "${files[@]}" | fzf --prompt="$prompt " --height=15 --border --reverse)"
-    [[ -z "$file" ]] && { echo -e "${RED}❌ No file selected! Exiting.${NC}" 1>&2; return 1; }
+    [[ -z "$file" ]] && { echo -e "${RED}❌ No file selected! Exiting.${NC}"; return 1; }
   else
     echo -e "${CYAN}Available CSV files:${NC}"
     local i=1; for f in "${files[@]}"; do printf " %2d) %s\n" "$i" "$f"; ((i++)); done
@@ -239,27 +366,28 @@ select_csv() {
     elif [[ "$sel" =~ ^[0-9]+$ ]] && (( sel>=1 && sel<=${#files[@]} )); then
       file="${files[sel-1]}"
     else
-      echo -e "${RED}❌ Invalid choice: ${sel}${NC}" 1>&2; return 1
+      echo -e "${RED}❌ Invalid choice: ${sel}${NC}"; return 1
     fi
   fi
   [[ "$file" == "$PWD"* ]] && file="."${file#$PWD}
   printf '%s\n' "$file"
 }
 
-# ===============  Go time  ===============
-install_fzf_if_missing
-ensure_conda_and_env
+# ===============  Bootstrap & Run  ===============
+ensure_portable_fzf
+resolve_conda
+ensure_conda_env
 preflight_env
 
 # Dataset selection
 if [[ -z "$SELECTED_CSV" ]]; then
-  SELECTED_CSV="$(select_csv '📂 CSV >' 'Data' 'data')" || exit 1
+  SELECTED_CSV="$(select_csv '📂 CSV >' "${REPO_ROOT}/Data" "${REPO_ROOT}/data")" || exit 1
 fi
-echo -e "📂 Using dataset: ${GREEN}$SELECTED_CSV${NC}"
+echo -e "📂 Using dataset: ${GREEN}${SELECTED_CSV}${NC}"
 
-# -------- EDA (inside env) --------
+# -------- EDA --------
 echo -e "${CYAN}🧪 Running dataset EDA...${NC}"
-conda run -n "$ENV_NAME" python Scripts/eda_profile.py \
+conda run -n "$ENV_NAME" python "${REPO_ROOT}/Scripts/eda_profile.py" \
   --data "$SELECTED_CSV" \
   --target "Diagnosed_PA" \
   --figs_dir "$FIGS_DIR" \
@@ -267,22 +395,23 @@ conda run -n "$ENV_NAME" python Scripts/eda_profile.py \
   --table1_csv "${OUTPUT_DIR}/eda_table1.csv" \
   --tests_csv "${OUTPUT_DIR}/eda_group_tests.csv"
 
-# -------- Benchmark ALL models (inside env) --------
+# -------- Benchmark ALL models --------
 echo -e "${CYAN}📈 Benchmarking ALL models (logistic, RF, XGB, SVM)...${NC}"
-conda run -n "$ENV_NAME" python Scripts/benchmark_models.py \
+conda run -n "$ENV_NAME" python "${REPO_ROOT}/Scripts/benchmark_models.py" \
   --data "$SELECTED_CSV" \
   --output_csv "$CSV_REPORT" \
-  --figs_dir "$FIGS_DIR"
+  --figs_dir "$FIGS_DIR" \
+  --models_dir "${OUTPUT_DIR}/models"
 
-# -------- Generate report (inside env) --------
+# -------- Generate report --------
 echo -e "${CYAN}📝 Building HTML report...${NC}"
-conda run -n "$ENV_NAME" python Scripts/generate_report.py \
+conda run -n "$ENV_NAME" python "${REPO_ROOT}/Scripts/generate_report.py" \
   --csv "$CSV_REPORT" \
   --output "$HTML_REPORT" \
   --template "$TEMPLATE_PATH" \
   --figs_dir "$FIGS_DIR"
 
-# Done
+# -------- Done --------
 echo -e "${GREEN}✅ Pipeline completed successfully.${NC}"
 echo -e "   📊 Metrics CSV : ${CSV_REPORT}"
 echo -e "   📁 Figures     : ${FIGS_DIR}"
