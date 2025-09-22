@@ -136,6 +136,7 @@ def _loess_smooth(x, y, frac=0.25):
 class PAModelTrainer:
     @staticmethod
     def _safe_sample_frame(X, n=200, random_state=42):
+        """Return a stratified-ish small slice that preserves column names if possible."""
         if isinstance(X, pd.DataFrame):
             n = min(len(X), n)
             return X.sample(n=n, random_state=random_state)
@@ -148,9 +149,9 @@ class PAModelTrainer:
     def __init__(
         self,
         data_path,
-        model_type='logistic',
-        resample_if_ir_below: float = 40.0,          
-        resample_if_norm_entropy_below: float = 0.65 
+        model_type: str = "logistic",
+        resample_if_ir_below: float = 40.0,           # imbalance ratio threshold (%)
+        resample_if_norm_entropy_below: float = 0.65  # normalized entropy threshold [0,1]
     ):
         self.data_path = data_path
         self.model_type = model_type
@@ -158,8 +159,8 @@ class PAModelTrainer:
         self.X_train = self.X_test = None
         self.y_train = self.y_test = None
         self.feature_names = None
-        self.grid_obj = None         
-        self.cv_results_df = None    
+        self.grid_obj = None          # GridSearchCV object after fit
+        self.cv_results_df = None     # DataFrame of cv_results_
         self.used_resampling = False
 
         self.resample_if_ir_below = float(resample_if_ir_below)
@@ -176,11 +177,12 @@ class PAModelTrainer:
         print(f"📂 Loaded dataset with {df.shape[0]} samples")
         if "Diagnosed_PA" not in df.columns:
             raise ValueError("Dataset must contain a 'Diagnosed_PA' column (binary target).")
+
         X = df.drop(columns=["Diagnosed_PA"])
         y = df["Diagnosed_PA"].astype(int)
         self.feature_names = X.columns.tolist()
 
-        # compute class balance stats
+        # class balance stats
         p_pos = float((y == 1).mean())
         p_min = min(p_pos, 1.0 - p_pos)
         p_max = 1.0 - p_min
@@ -188,16 +190,18 @@ class PAModelTrainer:
         self.entropy_bits = _entropy_bits(p_pos)
         self.normalized_entropy = _normalized_entropy_bits(p_pos)
 
-        print(f"📊 Class balance: positive={p_pos:.3f} | IR={self.imbalance_ratio_pct:.1f}% | "
-              f"H={self.entropy_bits:.3f} bits (normalized {self.normalized_entropy:.3f})")
+        print(
+            f"📊 Class balance: positive={p_pos:.3f} | IR={self.imbalance_ratio_pct:.1f}% | "
+            f"H={self.entropy_bits:.3f} bits (normalized {self.normalized_entropy:.3f})"
+        )
 
         self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
             X, y, test_size=0.2, stratify=y, random_state=42
         )
 
-        # Conditional resampling on the TRAIN split only
-        if (self.imbalance_ratio_pct < self.resample_if_ir_below or
-            self.normalized_entropy < self.resample_if_norm_entropy_below):
+        # Conditional resampling on TRAIN only
+        if (self.imbalance_ratio_pct < self.resample_if_ir_below
+            or self.normalized_entropy < self.resample_if_norm_entropy_below):
             if IMB_OK:
                 ros = RandomOverSampler(random_state=42)
                 X_res, y_res = ros.fit_resample(self.X_train, self.y_train)
@@ -209,45 +213,50 @@ class PAModelTrainer:
 
     # ────────────────────── Model + GridSearch ─────────────────── #
     def _model_and_grid(self):
-        if self.model_type == 'logistic':
-            model = LogisticRegression(max_iter=2000, class_weight='balanced', solver="lbfgs")
-            param_grid = {'C': [0.1, 1, 10, 100]}
-        elif self.model_type == 'rf':
-            model = RandomForestClassifier(class_weight='balanced', random_state=42, n_jobs=-1)
-            param_grid = {'n_estimators': [50, 100, 200, 400], 'max_depth': [5, 10, 20, None]}
-        elif self.model_type == 'xgb':
+        if self.model_type == "logistic":
+            model = LogisticRegression(max_iter=2000, class_weight="balanced", solver="lbfgs")
+            param_grid = {"C": [0.1, 1, 10, 100]}
+
+        elif self.model_type == "rf":
+            model = RandomForestClassifier(class_weight="balanced", random_state=42, n_jobs=-1)
+            param_grid = {"n_estimators": [50, 100, 200, 400], "max_depth": [5, 10, 20, None]}
+
+        elif self.model_type == "xgb":
             model = XGBClassifier(
                 objective="binary:logistic",
-                eval_metric='logloss',
+                eval_metric="logloss",
                 random_state=42,
                 n_jobs=-1,
                 tree_method="hist",
-                verbosity=0
+                verbosity=0,
             )
             param_grid = {
-                'n_estimators': [50, 100, 200, 400],
-                'max_depth': [3, 5, 7, 9],
-                'learning_rate': [0.03, 0.1, 0.2, 0.3],
+                "n_estimators": [50, 100, 200, 400],
+                "max_depth": [3, 5, 7, 9],
+                "learning_rate": [0.03, 0.1, 0.2, 0.3],
             }
-        elif self.model_type == 'svm':
-            model = SVC(probability=True, class_weight='balanced', random_state=42)
-            param_grid = {'C': [0.1, 1, 10, 100], 'gamma': ['scale', 0.01, 0.1, 1.0], 'kernel': ['rbf']}
+
+        elif self.model_type == "svm":
+            model = SVC(probability=True, class_weight="balanced", random_state=42)
+            param_grid = {"C": [0.1, 1, 10, 100], "gamma": ["scale", 0.01, 0.1, 1.0], "kernel": ["rbf"]}
+
         else:
             raise ValueError("Model type must be 'logistic', 'rf', 'xgb', or 'svm'.")
+
         return model, param_grid
 
     def train_model(self):
         model, param_grid = self._model_and_grid()
 
-        # Grid search tuned on NEGATIVE log-loss (we’ll flip to positive for plots)
+        # Grid search tuned on NEGATIVE log-loss (flip sign later for plots)
         self.grid_obj = GridSearchCV(
             model,
             param_grid,
             cv=5,
-            scoring='neg_log_loss',
+            scoring="neg_log_loss",
             n_jobs=-1,
             refit=True,
-            return_train_score=True
+            return_train_score=True,
         )
         self.grid_obj.fit(self.X_train, self.y_train)
         self.model = self.grid_obj.best_estimator_
@@ -255,7 +264,7 @@ class PAModelTrainer:
         # cv_results
         res = pd.DataFrame(self.grid_obj.cv_results_).copy()
         res["mean_loss"] = res["mean_test_score"].apply(_to_loss)
-        res["std_folds"] = res["std_test_score"]  
+        res["std_folds"] = res["std_test_score"]
         res["param_set_index"] = np.arange(len(res))
         self.cv_results_df = res
 
@@ -281,20 +290,20 @@ class PAModelTrainer:
         importances = None
         title = xlabel = None
 
-        if self.model_type == 'logistic':
+        if self.model_type == "logistic":
             importances = self.model.coef_[0]
             title = "Feature Importance (Logistic Regression)"
             xlabel = "Coefficient"
-        elif self.model_type in ['rf', 'xgb']:
+        elif self.model_type in ["rf", "xgb"]:
             importances = self.model.feature_importances_
             title = f"Feature Importance ({self.model_type.upper()})"
             xlabel = "Importance"
-        elif self.model_type == 'svm' and hasattr(self.model, 'coef_'):
+        elif self.model_type == "svm" and hasattr(self.model, "coef_"):
             importances = self.model.coef_[0]
             title = "Feature Importance (SVM - Linear)"
             xlabel = "Coefficient"
         else:
-            return  
+            return  # nothing to plot
 
         sorted_idx = np.argsort(np.abs(importances))[::-1]
         sorted_features = np.array(self.feature_names)[sorted_idx]
@@ -342,7 +351,7 @@ class PAModelTrainer:
 
         ax1 = plt.subplot(1, 2, 1)
         ax1.plot(fpr, tpr, lw=2.0, label=f"AUC = {roc_auc_score(self.y_test, y_prob):.2f}")
-        ax1.plot([0, 1], [0, 1], linestyle='--', lw=1.0)
+        ax1.plot([0, 1], [0, 1], linestyle="--", lw=1.0)
         ax1.set_xlabel("False Positive Rate")
         ax1.set_ylabel("True Positive Rate")
         ax1.set_title("ROC Curve")
@@ -362,51 +371,68 @@ class PAModelTrainer:
 
     # ─────────────────────────── SHAP (robust) ─────────────────────────── #
     def plot_shap_summary(self, save_path=None):
-        """Model-specific SHAP with safe fallbacks. Skips if unavailable or errors."""
+        """
+        Produce a standard SHAP beeswarm (not interaction summary) so all
+        top features are visible. Uses model-appropriate explainers.
+        """
         if not SHAP_OK:
-            print("⚠️ SHAP not available in environment; skipping SHAP plot.")
+            print("⚠️ SHAP not available; skipping.")
             return
 
         try:
             mtype = self.model_type.lower()
 
-            if mtype in ("rf", "xgb"):
-                explainer = shap.TreeExplainer(self.model)
-                X_eval = self._safe_sample_frame(self.X_test, n=600)
-                shap_values = explainer.shap_values(X_eval)
-                plt.figure()
-                if isinstance(shap_values, list) and len(shap_values) == 2:
-                    shap.summary_plot(shap_values[1], X_eval, show=False)
-                else:
-                    shap.summary_plot(shap_values, X_eval, show=False)
+            # sample + ensure DataFrame with feature names
+            X_eval = self._safe_sample_frame(self.X_test, n=800)
+            if isinstance(X_eval, np.ndarray):
+                X_eval = pd.DataFrame(X_eval, columns=self.feature_names)
 
-            elif mtype == "logistic" or (mtype == "svm" and getattr(self.model, "kernel", "linear") == "linear"):
+            if mtype in ("rf", "xgb"):
+                # Tree-based models
+                explainer = shap.TreeExplainer(self.model, feature_perturbation="tree_path_dependent")
+                sv = explainer.shap_values(X_eval, check_additivity=False)
+                if isinstance(sv, list):  # classifiers → [class0, class1]
+                    sv = sv[1]
+                plt.figure()
+                shap.summary_plot(
+                    sv, X_eval,
+                    plot_type="dot",
+                    max_display=min(25, X_eval.shape[1]),
+                    show=False
+                )
+
+            elif (mtype == "logistic") or (mtype == "svm" and getattr(self.model, "kernel", "linear") == "linear"):
+                # Linear models
                 try:
                     explainer = shap.LinearExplainer(self.model, self.X_train, feature_perturbation="interventional")
                 except TypeError:
                     explainer = shap.LinearExplainer(self.model, self.X_train)
-                X_eval = self._safe_sample_frame(self.X_test, n=1000)
-                shap_values = explainer.shap_values(X_eval)
+                sv = explainer.shap_values(X_eval)
                 plt.figure()
-                shap.summary_plot(shap_values, X_eval, show=False)
+                shap.summary_plot(
+                    sv, X_eval,
+                    plot_type="dot",
+                    max_display=min(25, X_eval.shape[1]),
+                    show=False
+                )
 
-            elif mtype == "svm":
-                # RBF SVM → KernelExplainer on probability function (sampled)
+            else:
+                # Nonlinear SVM → KernelExplainer (may be slow; we downsample)
                 f = lambda X: self.model.predict_proba(X)[:, 1]
                 background = self._safe_sample_frame(self.X_train, n=200)
                 explainer = shap.KernelExplainer(f, background, link="identity")
-                X_eval = self._safe_sample_frame(self.X_test, n=300)
-                shap_values = explainer.shap_values(X_eval, nsamples="auto")
+                sv = explainer.shap_values(X_eval, nsamples="auto")
                 plt.figure()
-                shap.summary_plot(shap_values, X_eval, show=False)
-
-            else:
-                print(f"ℹ️ SHAP not configured for model type '{self.model_type}'. Skipping.")
-                return
+                shap.summary_plot(
+                    sv, X_eval,
+                    plot_type="dot",
+                    max_display=min(25, X_eval.shape[1]),
+                    show=False
+                )
 
             if save_path:
                 _ensure_dir(save_path)
-                plt.savefig(save_path, bbox_inches='tight', dpi=300)
+                plt.savefig(save_path, bbox_inches="tight", dpi=300)
                 print(f"📁 SHAP summary plot saved to: {save_path}")
             plt.close()
 
@@ -441,9 +467,7 @@ class PAModelTrainer:
         n_params = len(param_cols)
         ncols = 2
         nrows = int(np.ceil(n_params / ncols))
-        fig, axes = plt.subplots(
-            nrows, ncols, figsize=(6.6*ncols, 4.9*nrows), squeeze=False, sharey=True
-        )
+        fig, axes = plt.subplots(nrows, ncols, figsize=(6.6 * ncols, 4.9 * nrows), squeeze=False, sharey=True)
 
         for idx, pcol in enumerate(param_cols):
             r, c = divmod(idx, ncols)
@@ -452,14 +476,18 @@ class PAModelTrainer:
             series = df[[pcol, "mean_loss"]].copy()
             series.rename(columns={pcol: "value"}, inplace=True)
 
-            # Determine numeric vs categorical axis
+            # numeric vs categorical
             is_numeric = True
             try:
                 series["value_num"] = pd.to_numeric(series["value"])
             except Exception:
                 is_numeric = False
 
-            grp = series.groupby("value", dropna=False)["mean_loss"].agg(["mean", "std", "count"]).reset_index()
+            grp = (
+                series.groupby("value", dropna=False)["mean_loss"]
+                .agg(["mean", "std", "count"])
+                .reset_index()
+            )
             grp["ci95"] = _ci95(grp["std"].fillna(0.0), grp["count"].clip(lower=1))
 
             if is_numeric:
@@ -492,7 +520,7 @@ class PAModelTrainer:
             ax.spines["bottom"].set_alpha(0.7)
 
         # Hide unused panels
-        for k in range(n_params, nrows*ncols):
+        for k in range(n_params, nrows * ncols):
             r, c = divmod(k, ncols)
             axes[r, c].axis("off")
 
@@ -507,9 +535,8 @@ class PAModelTrainer:
     @staticmethod
     def plot_calibration_grid(probas_dict, out_path, n_bins=20, loess_frac=0.25):
         """
-        probas_dict: mapping {"LOGISTIC": (y_true, y_prob), "RF": (...), "XGB": (...), "SVM": (...)}
-        Saves a 2×2 grid: each panel shows histogram (bottom axis) + reliability curve
-        (bin points + LOESS-smoothed curve). Title includes ECE.
+        probas_dict: {"LOGISTIC": (y_true, y_prob), "RF": (...), "XGB": (...), "SVM": (...)}
+        Saves a 2×2 grid with histogram + reliability curve + LOESS smoothing. Title includes ECE.
         """
         order = ["LOGISTIC", "RF", "XGB", "SVM"]
         present = [m for m in order if m in probas_dict]
@@ -534,7 +561,7 @@ class PAModelTrainer:
             ax.scatter(prob_pred, prob_true, s=26, alpha=0.85, label="Bins")
             ax.plot(xs, ys, lw=2.0, label="LOESS")
 
-            # histogram on twin axis at bottom
+            # histogram on twin axis
             ax_hist = ax.twinx()
             ax_hist.hist(y_prob, bins=20, range=(0, 1), alpha=0.20, edgecolor="none")
             ax_hist.set_yticks([])
@@ -557,9 +584,10 @@ class PAModelTrainer:
 
     # ───────────── PCA + t-SNE (optional 1×2 figure) ────────── #
     def plot_unsupervised_embeddings(self, save_path=None, perplexity=30):
-        """Make a 1×2 figure: PCA(2D) and t-SNE(2D), colored by true label (diagnostic)."""
+        """Make a 1×2 figure: PCA(2D) and t-SNE(2D), colored by true label."""
         if not isinstance(self.X_train, (pd.DataFrame, pd.Series, np.ndarray)):
             return
+
         X_full = pd.concat([self.X_train, self.X_test], axis=0)
         y_full = pd.concat([self.y_train, self.y_test], axis=0).values
 
@@ -587,7 +615,9 @@ class PAModelTrainer:
         ax1.set_title(pca_title); ax1.set_xlabel("PC1"); ax1.set_ylabel("PC2"); ax1.legend(frameon=False)
         ax2.set_title("t-SNE (2D) — unsupervised; PCA init"); ax2.set_xlabel("Dim 1"); ax2.set_ylabel("Dim 2"); ax2.legend(frameon=False)
         for ax in (ax1, ax2):
-            ax.spines["left"].set_alpha(0.7); ax.spines["bottom"].set_alpha(0.7); ax.grid(True, alpha=0.25, linestyle="--")
+            ax.spines["left"].set_alpha(0.7)
+            ax.spines["bottom"].set_alpha(0.7)
+            ax.grid(True, alpha=0.25, linestyle="--")
 
         if save_path:
             _ensure_dir(save_path)
