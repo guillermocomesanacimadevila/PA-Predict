@@ -10,8 +10,21 @@ import shutil
 import json
 
 MODEL_DISPLAY = ["LOGISTIC", "RF", "XGB", "SVM"]
-# include per-model grid panel key
+
+# Per-model plots (kept)
 PLOTS = ["confusion_matrix", "feature_importance", "roc_pr_curve", "shap_summary", "gridsearch_panels"]
+
+# Global multi-panel / overview assets we may emit from the pipeline
+GLOBAL_ASSETS = {
+    "GRID_OVERVIEW": "gridsearch_overview.png",   # all models, multi-panel (already produced)
+    "CALIBRATION_GRID": "calibration_grid.png",   # 2x2 (new)
+    "PCA_TSNE": "pca_tsne.png",                   # PCA+t-SNE (optional; trainer emits when called)
+    # Future optional rollups you might create:
+    "CM_GRID": "confusion_grid.png",
+    "ROCPR_GRID": "rocpr_grid.png",
+    "FI_GRID": "feature_importance_grid.png",
+    "SHAP_GRID": "shap_grid.png",
+}
 
 def _b64(path):
     if not path or not os.path.exists(path):
@@ -23,13 +36,18 @@ def build_images_dict(figs_dir: str):
     images = {}
     if not figs_dir:
         return images
+
+    # Per-model images
     for plot in PLOTS:
         for model in MODEL_DISPLAY:
             key = f"{plot}_{model}"
             path = os.path.join(figs_dir, f"{plot.lower()}_{model.lower()}.png")
             images[key] = _b64(path)
-    # optional overview collage of all grid-searches
-    images["GRID_OVERVIEW"] = _b64(os.path.join(figs_dir, "gridsearch_overview.png"))
+
+    # Global/overview images
+    for key, fname in GLOBAL_ASSETS.items():
+        images[key] = _b64(os.path.join(figs_dir, fname))
+
     return images
 
 def format_df(df_in: pd.DataFrame):
@@ -61,7 +79,7 @@ def format_df(df_in: pd.DataFrame):
     order = pd.CategoricalDtype(MODEL_DISPLAY, ordered=True)
     df["model"] = df["model"].astype(order)
 
-    # sort by primary metric: log loss (lower is better), tie-break by AUC
+    # sort by primary metric: log loss (lower better), tie-break by AUC
     df = df.sort_values(["log_loss","auc_roc"], ascending=[True, False]).reset_index(drop=True)
 
     # pretty display copy
