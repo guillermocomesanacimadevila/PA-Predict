@@ -144,10 +144,87 @@ open_html() {
   else echo -e "${YELLOW}ℹ️  Open manually: file://$f${NC}"; fi
 }
 
+# --- helpers: Homebrew + Linux package managers -----------------
+ensure_homebrew() {
+  # Only needed on macOS; installs Homebrew non-interactively if missing.
+  if command -v brew >/dev/null 2>&1; then
+    return 0
+  fi
+  echo -e "${YELLOW}🍺 Homebrew not found. Installing Homebrew (non-interactive)...${NC}"
+  if ! command -v curl >/dev/null 2>&1; then
+    echo -e "${RED}❌ curl is required to install Homebrew.${NC}"
+    return 1
+  fi
+  NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || {
+    echo -e "${YELLOW}⚠️  Homebrew install script failed.${NC}"
+    return 1
+  }
+  # Add brew to PATH for current shell
+  if [[ -x "/opt/homebrew/bin/brew" ]]; then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+  elif [[ -x "/usr/local/bin/brew" ]]; then
+    eval "$(/usr/local/bin/brew shellenv)"
+  fi
+  if ! command -v brew >/dev/null 2>&1; then
+    echo -e "${YELLOW}⚠️  Homebrew installation completed but 'brew' not on PATH yet. You may need to restart your shell.${NC}"
+    return 1
+  fi
+  return 0
+}
+
+linux_install_fzf_pkg() {
+  # Attempts to install fzf via the distro's package manager, using sudo when needed.
+  local cmd=""
+  if command -v apt-get >/dev/null 2>&1; then
+    cmd="apt-get update -y && apt-get install -y fzf"
+  elif command -v dnf >/dev/null 2>&1; then
+    cmd="dnf install -y fzf"
+  elif command -v yum >/dev/null 2>&1; then
+    cmd="yum install -y fzf"
+  elif command -v pacman >/dev/null 2>&1; then
+    cmd="pacman -Sy --noconfirm fzf"
+  elif command -v zypper >/dev/null 2>&1; then
+    cmd="zypper -n install fzf"
+  elif command -v apk >/dev/null 2>&1; then
+    cmd="apk add --no-cache fzf"
+  fi
+
+  if [[ -z "$cmd" ]]; then
+    return 1
+  fi
+
+  echo -e "${YELLOW}🧰 Installing fzf via package manager...${NC}"
+  if [[ $EUID -ne 0 ]] && command -v sudo >/dev/null 2>&1; then
+    sudo bash -lc "$cmd" || return 1
+  else
+    bash -lc "$cmd" || return 1
+  fi
+
+  command -v fzf >/dev/null 2>&1
+}
+
 # ===============  Portable fzf (no sudo)  ===============
 ensure_portable_fzf() {
   if ! $USE_FZF; then return 0; fi
   if command -v fzf >/dev/null 2>&1; then return 0; fi
+
+  # Try system installers first
+  if $IS_MAC; then
+    echo -e "${YELLOW}🔎 fzf not found. Trying Homebrew on macOS...${NC}"
+    if ensure_homebrew && brew install fzf; then
+      echo -e "${GREEN}✅ fzf installed via Homebrew.${NC}"
+      return 0
+    else
+      echo -e "${YELLOW}⚠️  Homebrew path failed; falling back to portable fzf.${NC}"
+    fi
+  elif $IS_LINUX; then
+    if linux_install_fzf_pkg; then
+      echo -e "${GREEN}✅ fzf installed via system package manager.${NC}"
+      return 0
+    else
+      echo -e "${YELLOW}⚠️  Package manager path failed; falling back to portable fzf.${NC}"
+    fi
+  fi
 
   echo -e "${YELLOW}⚙️  Installing portable fzf to ${LOCAL_BIN} ...${NC}"
   local fzf_ver="0.53.0"  # known good
